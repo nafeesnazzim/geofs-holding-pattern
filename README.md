@@ -4,11 +4,11 @@
 
 [**Install (one click)**](https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js) · needs [Tampermonkey](https://www.tampermonkey.net/) (or another userscript manager)
 
-![A British Airways Landor 747-8i in the hold at sunrise, tail and titles lit gold](docs/closeup-tail-sunrise-horizon.jpg)
+![A British Airways Landor 747-8i in a clean side profile at sunrise](docs/closeup-side-profile.jpg)
 
-![The same jet banking through a hold turn over the English countryside](docs/closeup-landor-over-countryside.jpg)
+![Close-up of the Landor titles, cheatline and GEnx engines](docs/closeup-titles-and-engines.jpg)
 
-![Silhouette of the 747-8i against the sunrise](docs/closeup-silhouette-sunrise.jpg)
+![The same jet climbing away over the English countryside](docs/closeup-landor-over-countryside.jpg)
 
 **The panel in action:** inside the 747-8i cockpit mid-hold, then after a clean exit.
 
