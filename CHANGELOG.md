@@ -9,7 +9,7 @@
 
 ## 1.2.0
 - Bank-regulated turn controller with a learned turn-rate gain (fixes over-fast turns in light aircraft such as the Cessna 172).
-- Smoother, safer roll-in on slow-rolling aircraft (E190, A350).
+- Smoother, safer roll-in on slow-rolling aircraft (E190, A380).
 
 ## 1.1.x
 - Reads true airspeed from the sim (GeoFS "kias" is not ISA-correct).
