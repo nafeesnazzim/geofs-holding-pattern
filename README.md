@@ -24,7 +24,7 @@
 - **EFC time (UTC HHMM):** optional expect-further-clearance clock.
 - **ICAO maximum holding speed** shown and applied (230 kt up to 14 000 ft, 240 kt to 20 000 ft, 265 kt to 34 000 ft, M0.83 above), and your old speed is restored on exit.
 - **Clean exit:** crosses the fix inbound, then re-engages NAV to the next waypoint with no speed dip.
-- Dark on-screen panel, silent (no sounds). Units: kt, ft, NM.
+- **Sleek avionics-style panel** with a live racetrack diagram that tracks your aircraft. Collapse it to a slim pill with **Shift+H** and drag it anywhere. Silent (no sounds). Units: kt, ft, NM.
 
 ## Install
 
@@ -43,7 +43,7 @@ Updates arrive automatically through Tampermonkey.
 5. Leave **LEG** empty for AUTO, or type minutes (0.5-5).
 6. Optionally enter the **EFC** as UTC HHMM.
 7. Press **ENTER HOLD**. The panel shows status, timer, wind correction, speed and EFC.
-8. Press **EXIT HOLD** when you are cleared. You leave the hold at the fix and NAV resumes towards the next waypoint.
+8. Press **EXIT HOLD** (the same button) when you are cleared. You leave the hold at the fix and NAV resumes towards the next waypoint.
 
 Turning the autopilot off cancels the hold.
 
