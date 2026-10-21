@@ -67,6 +67,7 @@ Flown live in GeoFS and simulated (thousands of randomised runs plus edge cases)
 | Airbus A380 | left teardrop at FL280 |
 | Airbus A350 | Mach mode at FL360, left parallel |
 | Boeing 777-300ER, 787-8 | right entries |
+| Boeing 747-8i | hold flown after a livery swap, clean exit |
 | Embraer E190 | left teardrop |
 | Cessna 172 | low and slow |
 
@@ -75,7 +76,7 @@ Max bank stayed at or under about 24° in all flights.
 ## Known limits
 
 - Tested with winds up to about 40 kt, the most the GeoFS slider allows.
-- Sluggish heavy aircraft (such as the A350) take about 30 s to roll into the turn. This is deliberate, to keep bank safe.
+- Sluggish heavy aircraft (such as the A380) take about 30 s to roll into the turn. This is deliberate, to keep bank safe.
 - Changing the flight plan while holding may confuse the "next waypoint" on exit.
 - Not every aircraft was re-flown on the latest version.
 - Written for GeoFS as it is today. A GeoFS update may break it; please open an issue if so.
