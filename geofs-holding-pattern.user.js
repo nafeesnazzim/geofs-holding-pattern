@@ -9,7 +9,7 @@
 // @supportURL   https://github.com/nafeesnazzim/geofs-holding-pattern/issues
 // @updateURL    https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
 // @downloadURL  https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
-// @version      1.2.2
+// @version      1.3.0
 // @description  Flies a real ICAO racetrack hold on any FMC waypoint: sector-based entries, standard-rate turns, wind-corrected tracks, outbound timing trimmed from the inbound leg, NAV re-engaged on exit.
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
@@ -384,6 +384,10 @@
         out.timerLabel = 'TO FIX';
         out.timer = this.gs > 20 ? Math.max(0, -this.geo.along / this.gs * 3600) : null;
       }
+      out.dir = this.dir; out.gs = this.gs;
+      out.along = this.geo.along; out.cross = this.geo.cross;
+      { const rate = Math.min(3, 1091 * Math.tan(25 * D2R) / (this.tas || this.gs || 200)); out.turnR = this.gs > 20 ? (this.gs / 3600) / (rate * D2R) : null; }   // turn radius in NM, for the diagram
+      out.legNM = this.gs > 20 ? this.gs * (this.outTime || this.legTime(this.s.altFt)) / 3600 : null;
       out.lastInboundErr = this.lastInboundErr;
       out.outTime = this.outTime;
       return out;
@@ -445,68 +449,173 @@
   }
 
   const CSS = `
-  #ghold{position:fixed;top:84px;right:12px;width:268px;z-index:99999;font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#dfe7ef;
-    background:rgba(10,14,20,.84);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.14);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.5);user-select:none}
-  #ghold .gh-head{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;cursor:move;border-bottom:1px solid rgba(255,255,255,.1);letter-spacing:.14em;font-weight:700;color:#5be3a1}
-  #ghold button{font:inherit;color:#dfe7ef;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:5px 8px;cursor:pointer}
-  #ghold button:hover{background:rgba(255,255,255,.16)}
-  #ghold .gh-body{padding:10px;display:flex;flex-direction:column;gap:7px}
-  #ghold.min .gh-body{display:none}
-  #ghold label{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#8fa0b3;font-size:11px;letter-spacing:.06em}
-  #ghold input,#ghold select{width:118px;font:inherit;color:#fff;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:4px 6px;box-sizing:border-box;user-select:text}
-  #ghold .gh-row{display:flex;gap:6px}
-  #ghold .gh-row button{flex:1}
-  #ghold .gh-seg button.on{background:#5be3a1;color:#06150d;border-color:#5be3a1;font-weight:700}
-  #ghold #gh-enter{background:#1f6f4a;border-color:#2fa56f;font-weight:700}
-  #ghold #gh-exit{background:#6f2f1f;border-color:#a5502f;font-weight:700}
-  #ghold .gh-read{border-top:1px solid rgba(255,255,255,.1);padding-top:7px;display:grid;grid-template-columns:auto 1fr;gap:2px 10px}
-  #ghold .gh-read span:nth-child(odd){color:#8fa0b3}
-  #ghold .gh-read span:nth-child(even){text-align:right;color:#fff}
-  #ghold #gh-msg{min-height:15px;color:#ffcf5a}
-  #ghold .amber{color:#ffcf5a!important}#ghold .red{color:#ff6b6b!important}`;
+  #ghold{--c:#3ee6d6;--c2:rgba(62,230,214,.16);--am:#ffc24a;--rd:#ff5d5d;--tx:#e8f1f6;--dm:#7f93a3;--ln:rgba(140,200,215,.16);
+    position:fixed;top:72px;right:84px;width:272px;z-index:99999;box-sizing:border-box;color:var(--tx);user-select:none;
+    font:12px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:linear-gradient(180deg,rgba(14,20,28,.88),rgba(7,11,17,.9));backdrop-filter:blur(10px) saturate(1.2);
+    border:1px solid var(--ln);border-radius:14px;box-shadow:0 10px 34px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.05);
+    transition:opacity .2s ease,transform .2s ease}
+  #ghold *{box-sizing:border-box}
+  #ghold .gh-num,#ghold input,#ghold select,#ghold .gh-pill b{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+  #ghold .gh-head{display:flex;align-items:center;gap:8px;padding:9px 10px 8px 12px;cursor:grab;border-bottom:1px solid var(--ln)}
+  #ghold .gh-head:active{cursor:grabbing}
+  #ghold .gh-dot{width:8px;height:8px;border-radius:50%;background:#46586a;box-shadow:0 0 0 3px rgba(70,88,106,.18);transition:background .25s,box-shadow .25s}
+  #ghold.run .gh-dot{background:var(--c);box-shadow:0 0 0 3px var(--c2),0 0 10px var(--c)}
+  #ghold.turn .gh-dot{background:var(--am);box-shadow:0 0 0 3px rgba(255,194,74,.18),0 0 10px var(--am)}
+  #ghold .gh-title{font-weight:700;letter-spacing:.2em;font-size:11px;color:var(--c)}
+  #ghold .gh-sp{flex:1}
+  #ghold .gh-fixname{color:var(--dm);font-size:11px;letter-spacing:.04em}
+  #ghold .gh-min{width:22px;height:22px;display:grid;place-items:center;padding:0;border-radius:6px;background:transparent;border:1px solid transparent;color:var(--dm);cursor:pointer;font:inherit}
+  #ghold .gh-min:hover{color:var(--tx);background:rgba(255,255,255,.07)}
+  #ghold .gh-wrap{display:grid;grid-template-rows:1fr;transition:grid-template-rows .24s ease}
+  #ghold .gh-wrap>div{overflow:hidden;min-height:0}
+  #ghold.min .gh-wrap{grid-template-rows:0fr}
+  #ghold .gh-body{padding:11px 12px 12px;display:flex;flex-direction:column;gap:11px;transition:opacity .2s ease}
+  #ghold.min .gh-body{opacity:0}
+  #ghold .gh-pill{display:none;align-items:center;gap:8px;padding:8px 12px;cursor:grab;white-space:nowrap}
+  #ghold.min .gh-pill{display:flex}
+  #ghold.min .gh-head{display:none}
+  #ghold .gh-pill b{font-weight:600;color:var(--tx)}
+  #ghold .gh-pill i{font-style:normal;color:var(--dm)}
+  #ghold .gh-top{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:stretch}
+  #ghold .gh-dia{position:relative;border:1px solid var(--ln);border-radius:10px;background:radial-gradient(circle at 50% 40%,rgba(62,230,214,.07),rgba(0,0,0,0) 70%),rgba(0,0,0,.28);overflow:hidden}
+  #ghold .gh-dia svg{display:block;width:100%;height:104px}
+  #ghold .gh-dia .gh-cap{position:absolute;left:0;right:0;bottom:3px;text-align:center;font-size:9px;letter-spacing:.06em;color:var(--dm)}
+  #ghold .gh-info{display:flex;flex-direction:column;justify-content:space-between;min-width:0}
+  #ghold .gh-lbl{font-size:9.5px;letter-spacing:.14em;color:var(--dm);text-transform:uppercase}
+  #ghold #r-status{font-weight:700;font-size:13px;letter-spacing:.02em;margin-top:2px;transition:color .2s}
+  #ghold .gh-chip{display:inline-block;margin-top:4px;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--c);background:var(--c2);border:1px solid rgba(62,230,214,.3)}
+  #ghold .gh-chip:empty{display:none}
+  #ghold #r-timer{font-size:26px;font-weight:600;letter-spacing:-.01em;line-height:1.1;color:var(--tx)}
+  #ghold .gh-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:9px 0 1px;border-top:1px solid var(--ln)}
+  #ghold .gh-grid div span:last-child{display:block;font-size:12px;font-weight:600;margin-top:1px}
+  #ghold .gh-form{display:grid;grid-template-columns:1fr 1fr;gap:9px 12px;transition:opacity .2s}
+  #ghold.run .gh-form .gh-lock{opacity:.4;pointer-events:none}
+  #ghold .gh-f{display:flex;flex-direction:column;gap:2px;min-width:0}
+  #ghold .gh-f.wide{grid-column:1/-1}
+  #ghold input,#ghold select{width:100%;font-size:12.5px;color:var(--tx);background:transparent;border:0;border-bottom:1px solid rgba(140,200,215,.28);border-radius:0;padding:3px 0 4px;outline:none;user-select:text;transition:border-color .15s}
+  #ghold select option{background:#0b1118;color:var(--tx)}
+  #ghold input::placeholder{color:#4d5f6e}
+  #ghold input:focus,#ghold select:focus{border-bottom-color:var(--c)}
+  #ghold .gh-seg{display:flex;padding:2px;border-radius:8px;background:rgba(0,0,0,.35);border:1px solid var(--ln)}
+  #ghold .gh-seg button{flex:1;font:inherit;font-size:11px;font-weight:700;letter-spacing:.08em;padding:4px 0;border:0;border-radius:6px;background:transparent;color:var(--dm);cursor:pointer;transition:background .15s,color .15s}
+  #ghold .gh-seg button.on{background:var(--c);color:#04201d}
+  #ghold #gh-enter{width:100%;font:inherit;font-weight:700;letter-spacing:.12em;font-size:12px;padding:9px 0;border-radius:9px;cursor:pointer;color:#04201d;background:var(--c);border:0;
+    box-shadow:0 4px 16px rgba(62,230,214,.22);transition:transform .08s,filter .15s,background .2s,box-shadow .2s}
+  #ghold #gh-enter:hover{filter:brightness(1.08)}#ghold #gh-enter:active{transform:translateY(1px)}
+  #ghold.run #gh-enter{color:#fff;background:#b8362f;box-shadow:0 4px 16px rgba(255,93,93,.2)}
+  #ghold.run.armed #gh-enter{background:#4a2420;color:#ffb3ae;box-shadow:none}
+  #ghold #gh-msg{min-height:0;color:var(--am);font-size:11.5px;line-height:1.3}
+  #ghold #gh-msg:empty{display:none}
+  #ghold .amber{color:var(--am)!important}#ghold .red{color:var(--rd)!important}
+  `;
 
   const pad = (n, w) => String(Math.round(n)).padStart(w, '0');
   const hdg3 = d => pad(norm360(d) === 0 ? 360 : norm360(d), 3);
   const mmss = s => (s == null ? '--:--' : pad(Math.floor(s / 60), 2) + ':' + pad(Math.floor(s % 60), 2));
   const PHASE_TXT = {
-    APPROACH: 'DIRECT TO FIX', TURN_OUT: 'TURN OUTBOUND', OUTBOUND: 'OUTBOUND', TURN_IN: 'TURN INBOUND', INBOUND: 'INBOUND',
-    TD_TURN: 'TEARDROP: TURN', TD_OUT: 'TEARDROP: OUT', PAR_TURN: 'PARALLEL: TURN', PAR_OUT: 'PARALLEL: OUT'
+    APPROACH: 'Direct to fix', TURN_OUT: 'Turn outbound', OUTBOUND: 'Outbound', TURN_IN: 'Turn inbound', INBOUND: 'Inbound',
+    TD_TURN: 'Teardrop turn', TD_OUT: 'Teardrop out', PAR_TURN: 'Parallel turn', PAR_OUT: 'Parallel out'
   };
+  const PHASE_PILL = {
+    APPROACH: 'TO FIX', TURN_OUT: 'TURN', OUTBOUND: 'OUT', TURN_IN: 'TURN', INBOUND: 'IN',
+    TD_TURN: 'TURN', TD_OUT: 'OUT', PAR_TURN: 'TURN', PAR_OUT: 'OUT'
+  };
+  const TURN_PH = { TURN_OUT: 1, TURN_IN: 1, TD_TURN: 1, PAR_TURN: 1 };
+
+  // Racetrack geometry in NM: fix at the origin, inbound course points up, +x is to the right.
+  function racetrack(dir, r, L) {
+    const x2 = 2 * r * dir, sw = dir > 0 ? 0 : 1;   // the group is y-flipped, so the sweep flag is mirrored
+    return {
+      inb: `M0,${-L} L0,0`,
+      top: `M0,0 A${r},${r} 0 0 ${sw} ${x2},0`,
+      out: `M${x2},0 L${x2},${-L}`,
+      bot: `M${x2},${-L} A${r},${r} 0 0 ${sw} 0,${-L}`
+    };
+  }
 
   function buildUI(core) {
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     const root = document.createElement('div'); root.id = 'ghold';
     root.innerHTML = `
-      <div class="gh-head"><span>HOLD</span><button class="gh-min" title="Minimise">&ndash;</button></div>
-      <div class="gh-body">
-        <label>FIX <select id="gh-fix"></select></label>
-        <label>INBOUND CRS <input id="gh-crs" inputmode="numeric" maxlength="3" placeholder="270"></label>
-        <label>TURNS <span class="gh-row gh-seg" style="width:118px"><button data-dir="1" class="on">RIGHT</button><button data-dir="-1">LEFT</button></span></label>
-        <label>LEG (min) <input id="gh-leg" placeholder="AUTO"></label>
-        <label>EFC (UTC) <input id="gh-efc" inputmode="numeric" maxlength="4" placeholder="HHMM"></label>
-        <div class="gh-row"><button id="gh-enter">ENTER HOLD</button><button id="gh-exit">EXIT HOLD</button></div>
-        <div id="gh-msg"></div>
-        <div class="gh-read">
-          <span>STATUS</span><span id="r-status">IDLE</span>
-          <span id="r-tl">TIMER</span><span id="r-timer">--:--</span>
-          <span>FIX</span><span id="r-fix">---</span>
-          <span>WIND CORR</span><span id="r-wca">---</span>
-          <span>SPEED</span><span id="r-spd">---</span>
-          <span>EFC</span><span id="r-efc">---</span>
+      <div class="gh-head"><span class="gh-dot"></span><span class="gh-title">HOLD</span><span class="gh-sp"></span><span class="gh-fixname" id="gh-hfix"></span><button class="gh-min" title="Collapse (Shift+H)">&ndash;</button></div>
+      <div class="gh-pill"><span class="gh-dot"></span><span class="gh-title">HOLD</span><i id="gh-pfix"></i><b id="gh-pst">IDLE</b><b id="gh-ptm"></b></div>
+      <div class="gh-wrap"><div><div class="gh-body">
+        <div class="gh-top">
+          <div class="gh-dia">
+            <svg viewBox="0 0 104 104" aria-label="Hold pattern">
+              <g id="gh-g" fill="none" stroke-linecap="round" stroke-width="2.2">
+                <path id="gp-inb" stroke="#4b6376"/><path id="gp-top" stroke="#4b6376"/><path id="gp-out" stroke="#4b6376"/><path id="gp-bot" stroke="#4b6376"/>
+              </g>
+              <circle id="gd-fix" r="3" fill="#0b1118" stroke="#e8f1f6" stroke-width="1.6"/>
+              <circle id="gd-ac-halo" r="7" fill="rgba(62,230,214,.18)" style="display:none"/>
+              <circle id="gd-ac" r="3.4" fill="#3ee6d6" style="display:none"/>
+            </svg>
+            <div class="gh-cap" id="r-fix">---</div>
+          </div>
+          <div class="gh-info">
+            <div><div class="gh-lbl">Status</div><div id="r-status">Idle</div><span class="gh-chip" id="r-entry"></span></div>
+            <div><div class="gh-lbl" id="r-tl">Timer</div><div class="gh-num" id="r-timer">--:--</div></div>
+          </div>
         </div>
-      </div>`;
+        <div class="gh-grid">
+          <div><span class="gh-lbl">Wind corr</span><span class="gh-num" id="r-wca">---</span></div>
+          <div><span class="gh-lbl">Max spd</span><span class="gh-num" id="r-spd">---</span></div>
+          <div><span class="gh-lbl">EFC</span><span class="gh-num" id="r-efc">---</span></div>
+        </div>
+        <div class="gh-form">
+          <label class="gh-f gh-lock"><span class="gh-lbl">Fix</span><select id="gh-fix"></select></label>
+          <label class="gh-f gh-lock"><span class="gh-lbl">Inbound crs</span><input id="gh-crs" inputmode="numeric" maxlength="3" placeholder="270"></label>
+          <div class="gh-f wide gh-lock"><span class="gh-lbl">Turns</span><span class="gh-seg"><button data-dir="1" class="on">RIGHT</button><button data-dir="-1">LEFT</button></span></div>
+          <label class="gh-f gh-lock"><span class="gh-lbl">Leg (min)</span><input id="gh-leg" placeholder="AUTO"></label>
+          <label class="gh-f"><span class="gh-lbl">EFC (UTC)</span><input id="gh-efc" inputmode="numeric" maxlength="4" placeholder="HHMM"></label>
+        </div>
+        <button id="gh-enter">ENTER HOLD</button>
+        <div id="gh-msg"></div>
+      </div></div></div>`;
     document.body.appendChild(root);
     const $ = id => root.querySelector(id);
 
     // keep every keystroke away from GeoFS controls while typing
     root.querySelectorAll('input,select').forEach(el => ['keydown', 'keyup', 'keypress'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation())));
 
-    // drag + minimise
-    const head = $('.gh-head'); let drag = null;
-    head.addEventListener('mousedown', e => { if (e.target.closest('button')) return; const r = root.getBoundingClientRect(); drag = { x: e.clientX - r.left, y: e.clientY - r.top }; });
-    window.addEventListener('mousemove', e => { if (!drag) return; root.style.left = (e.clientX - drag.x) + 'px'; root.style.top = (e.clientY - drag.y) + 'px'; root.style.right = 'auto'; });
-    window.addEventListener('mouseup', () => { drag = null; });
-    $('.gh-min').addEventListener('click', () => root.classList.toggle('min'));
+    // remembered position + collapsed state (per browser; falls back silently)
+    const KEY = 'geofsHoldPanel';
+    let saved = {}; try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
+    const save = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* storage unavailable */ } };
+    function place(x, y) {
+      const w = root.offsetWidth || 272, h = root.offsetHeight || 60;
+      x = clamp(x, 4, Math.max(4, innerWidth - w - 4)); y = clamp(y, 4, Math.max(4, innerHeight - h - 4));
+      root.style.left = x + 'px'; root.style.top = y + 'px'; root.style.right = 'auto';
+    }
+    if (typeof saved.x === 'number') place(saved.x, saved.y);
+    if (saved.min) root.classList.add('min');
+    addEventListener('resize', () => { if (root.style.left) place(parseFloat(root.style.left), parseFloat(root.style.top)); });
+
+    // drag (header or pill); a click without movement on the pill expands it
+    let drag = null;
+    function down(e) {
+      if (e.target.closest('button')) return;
+      const r = root.getBoundingClientRect(); drag = { x: e.clientX - r.left, y: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false };
+      e.preventDefault();
+    }
+    $('.gh-head').addEventListener('mousedown', down); $('.gh-pill').addEventListener('mousedown', down);
+    addEventListener('mousemove', e => {
+      if (!drag) return;
+      if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 4) drag.moved = true;
+      if (drag.moved) place(e.clientX - drag.x, e.clientY - drag.y);
+    });
+    addEventListener('mouseup', () => {
+      if (!drag) return;
+      if (drag.moved) { saved.x = parseFloat(root.style.left); saved.y = parseFloat(root.style.top); save(); }
+      else if (root.classList.contains('min')) setMin(false);
+      drag = null;
+    });
+    function setMin(v) { root.classList.toggle('min', v); saved.min = v; save(); }
+    $('.gh-min').addEventListener('click', () => setMin(true));
+    addEventListener('keydown', e => {
+      if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyH' && !/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) setMin(!root.classList.contains('min'));
+    });
 
     let dir = 1;
     root.querySelectorAll('.gh-seg button').forEach(b => b.addEventListener('click', () => {
@@ -536,7 +645,7 @@
       return t - now.getTime();
     }
 
-    $('#gh-enter').addEventListener('click', () => {
+    function enterHold() {
       const arr = geofs.flightPlan.waypointArray || [], idx = +$('#gh-fix').value, w = arr[idx];
       const crsTxt = $('#gh-crs').value.trim(), crs = +crsTxt;
       if (!w) return setMsg('Pick a holding fix from the flight plan');
@@ -546,29 +655,84 @@
       if (legTxt && legTxt.toUpperCase() !== 'AUTO') { const m = parseFloat(legTxt); if (!(m >= 0.5 && m <= 5)) return setMsg('Leg time: AUTO or 0.5 to 5 min'); legS = m * 60; }
       const r = core.start({ fix: { index: idx, ident: w.ident, lat: w.lat, lon: w.lon }, ic: crs, dir, legOverrideS: legS });
       setMsg(r.ok ? '' : r.err);
-    });
-    $('#gh-exit').addEventListener('click', () => { core.requestExit(); });
+    }
+    // one context-aware button: ENTER HOLD when idle, EXIT HOLD while holding
+    $('#gh-enter').addEventListener('click', () => { if (core.phase === 'IDLE') enterHold(); else core.requestExit(); });
 
     function setMsg(m) { core.msg = m; }
 
+    const P = { inb: $('#gp-inb'), top: $('#gp-top'), out: $('#gp-out'), bot: $('#gp-bot') };
+    const ac = $('#gd-ac'), halo = $('#gd-ac-halo'), fixDot = $('#gd-fix');
+    let lastGeom = '';
+
+    function drawDiagram(s) {
+      // scale the pattern into the 104 x 104 box
+      const d = s.idle ? dir : s.dir;
+      const r = s.idle || !s.turnR ? 1 : clamp(s.turnR, 0.4, 8);
+      const L = s.idle || !s.legNM ? 1.05 : clamp(s.legNM, 0.8, 12);
+      const m = 21, k = Math.min((104 - 2 * m) / (2 * r), (104 - 2 * m) / (L + 2 * r));
+      const cx = 52 - r * d * k, cy = 52 - (L / 2) * k;       // centre the pattern in the box
+      const g = $('#gh-g'), key = [d, r.toFixed(2), L.toFixed(2)].join('|');
+      if (key !== lastGeom) {
+        lastGeom = key; const t = racetrack(d, r, L);
+        P.inb.setAttribute('d', t.inb); P.top.setAttribute('d', t.top); P.out.setAttribute('d', t.out); P.bot.setAttribute('d', t.bot);
+        const tf = `translate(${cx.toFixed(2)} ${cy.toFixed(2)}) scale(${k.toFixed(3)} ${(-k).toFixed(3)})`;
+        g.setAttribute('transform', tf); g.setAttribute('stroke-width', (2.2 / k).toFixed(3));
+        fixDot.setAttribute('cx', cx.toFixed(2)); fixDot.setAttribute('cy', cy.toFixed(2));
+        P.inb.dataset.k = k; P.inb.dataset.cx = cx; P.inb.dataset.cy = cy;
+      }
+      const K = +P.inb.dataset.k, CX = +P.inb.dataset.cx, CY = +P.inb.dataset.cy;
+      // highlight the leg being flown
+      const ph = s.idle ? '' : s.phase, on = '#3ee6d6', off = '#4b6376', am = '#ffc24a';
+      P.inb.setAttribute('stroke', ph === 'INBOUND' || ph === 'PAR_OUT' ? on : off);   // a parallel entry flies outbound alongside the inbound leg
+      P.out.setAttribute('stroke', ph === 'OUTBOUND' || ph === 'TD_OUT' ? on : off);
+      P.top.setAttribute('stroke', ph === 'TURN_OUT' || ph === 'TD_TURN' || ph === 'PAR_TURN' ? am : off);
+      P.bot.setAttribute('stroke', ph === 'TURN_IN' ? am : off);
+      if (s.idle || s.along == null) { ac.style.display = halo.style.display = 'none'; return; }
+      let x = CX + s.cross * K, y = CY - s.along * K, out = false;
+      const lim = 7; const cxp = clamp(x, lim, 104 - lim), cyp = clamp(y, lim, 104 - lim);
+      if (cxp !== x || cyp !== y) out = true;
+      ac.style.display = halo.style.display = '';
+      ac.setAttribute('cx', cxp.toFixed(1)); ac.setAttribute('cy', cyp.toFixed(1));
+      halo.setAttribute('cx', cxp.toFixed(1)); halo.setAttribute('cy', cyp.toFixed(1));
+      ac.setAttribute('opacity', out ? '.55' : '1'); halo.setAttribute('opacity', out ? '.4' : '1');
+    }
+
     function render() {
       refreshFixes();
-      const s = core.status();
+      const s = core.status(), active = !s.idle;
+      root.classList.toggle('run', active);
+      root.classList.toggle('turn', active && !!TURN_PH[s.phase]);
+      root.classList.toggle('armed', active && !!s.exitPending);
+      $('#gh-enter').textContent = !active ? 'ENTER HOLD' : (s.exitPending ? 'EXIT ARMED' : 'EXIT HOLD');
       $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : '');
-      $('#r-status').textContent = s.idle ? 'IDLE' : (PHASE_TXT[s.phase] || s.phase) + (s.entry ? ' / ' + s.entry : '');
-      $('#r-tl').textContent = s.timerLabel || 'TIMER';
-      $('#r-timer').textContent = s.idle ? '--:--' : mmss(s.timer);
-      $('#r-fix').textContent = s.idle ? '---' : s.dist.toFixed(1) + ' NM  ' + hdg3(s.brg) + '\u00B0';
-      $('#r-wca').textContent = s.idle || s.wca == null ? '---' : (Math.abs(s.wca) < 0.5 ? '0\u00B0' : Math.abs(s.wca).toFixed(0) + '\u00B0 ' + (s.wca > 0 ? 'R' : 'L'));
-      $('#r-spd').textContent = s.idle ? '---' : s.speedNote || '---';
+      const stTxt = s.idle ? 'Idle' : (PHASE_TXT[s.phase] || s.phase);
+      $('#r-status').textContent = stTxt;
+      $('#r-status').style.color = active && TURN_PH[s.phase] ? 'var(--am)' : '';
+      $('#r-entry').textContent = s.entry || '';
+      let tl = 'Timer', tv = '--:--';
+      if (active) {
+        if (s.timerLabel) { tl = s.timerLabel; tv = mmss(s.timer); }
+        else if (s.dist != null) { tl = 'To fix'; tv = s.dist.toFixed(1) + ' NM'; }
+      }
+      $('#r-tl').textContent = tl; $('#r-timer').textContent = tv;
+      $('#r-fix').textContent = !active || s.dist == null ? '---' : (core.fix.ident || 'FIX') + '  ' + s.dist.toFixed(1) + ' NM  ' + hdg3(s.brg) + '°';
+      $('#gh-hfix').textContent = active && core.fix ? (core.fix.ident || '') : '';
+      $('#r-wca').textContent = s.idle || s.wca == null ? '---' : (Math.abs(s.wca) < 0.5 ? '0°' : Math.abs(s.wca).toFixed(0) + '° ' + (s.wca > 0 ? 'R' : 'L'));
+      $('#r-spd').textContent = s.idle ? '---' : (s.speedNote || '---').replace(/^max\s*/i, '');
       const ms = efcMs(), e = $('#r-efc');
-      e.className = '';
+      e.className = 'gh-num';
       if (ms == null) e.textContent = '---';
       else {
         const sec = Math.abs(ms) / 1000;
         e.textContent = (ms < 0 ? '+' : 'T-') + (sec >= 3600 ? Math.floor(sec / 3600) + ':' + pad(Math.floor(sec % 3600 / 60), 2) + ':' + pad(sec % 60, 2) : mmss(sec));
-        if (ms < 0) e.className = 'red'; else if (ms < 300e3) e.className = 'amber';
+        if (ms < 0) e.className = 'gh-num red'; else if (ms < 300e3) e.className = 'gh-num amber';
       }
+      // slim pill
+      $('#gh-pfix').textContent = active && core.fix ? (core.fix.ident || 'FIX') : '';
+      $('#gh-pst').textContent = !active ? 'IDLE' : (PHASE_PILL[s.phase] || '') + (s.entry ? ' · ' + s.entry.slice(0, 3) : '');
+      $('#gh-ptm').textContent = active && (s.timerLabel ? mmss(s.timer) : (s.dist != null ? s.dist.toFixed(1) + ' NM' : ''));
+      drawDiagram(s);
     }
     return render;
   }
