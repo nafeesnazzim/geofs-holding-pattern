@@ -6,8 +6,6 @@
 
 ![A British Airways Landor 747-8i in a clean side profile at sunrise](docs/closeup-side-profile.jpg)
 
-![Close-up of the Landor titles, cheatline and GEnx engines](docs/closeup-titles-and-engines.jpg)
-
 ![The same jet flying away over the English countryside](docs/closeup-landor-over-countryside.jpg)
 
 **The panel in action:** inside the 747-8i cockpit mid-hold, then after a clean exit.
