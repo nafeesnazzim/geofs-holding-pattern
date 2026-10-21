@@ -3,11 +3,13 @@
 // @namespace    nuffy.geofs.hold
 // @author       Nuffy
 // @license      MIT
+// @icon         https://www.geo-fs.com/images/icons/favicon.ico
+// @icon64       https://www.geo-fs.com/images/icons/apple-touch-icon.png
 // @homepageURL  https://github.com/nafeesnazzim/geofs-holding-pattern
 // @supportURL   https://github.com/nafeesnazzim/geofs-holding-pattern/issues
 // @updateURL    https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
 // @downloadURL  https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
-// @version      1.2.1
+// @version      1.2.2
 // @description  Flies a real ICAO racetrack hold on any FMC waypoint: sector-based entries, standard-rate turns, wind-corrected tracks, outbound timing trimmed from the inbound leg, NAV re-engaged on exit.
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
