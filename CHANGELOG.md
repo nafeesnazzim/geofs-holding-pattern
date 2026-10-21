@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.2
+- Added the GeoFS icon to the Tampermonkey script entry.
+
 ## 1.2.1
 - Above FL340 in Mach mode the hold now sets M0.83 (ICAO max holding speed).
 - The entry label (direct / teardrop / parallel) clears after the first circuit.
