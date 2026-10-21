@@ -4,6 +4,10 @@
 
 [**Install (one click)**](https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js) · needs [Tampermonkey](https://www.tampermonkey.net/) (or another userscript manager)
 
+![A 747-8i in the British Airways Landor livery flying the hold at sunrise](docs/hero-golden-hour.jpg)
+
+![Cockpit view of the 747-8i in the hold, with the Hold panel open](docs/cockpit-hold.jpg)
+
 ## Features
 
 - **Any FMC waypoint** as the hold fix, chosen from a dropdown.
