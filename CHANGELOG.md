@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+- Redesigned HOLD panel: glass-cockpit look with a live racetrack diagram that tracks your aircraft and highlights the leg being flown.
+- One context-aware button: ENTER HOLD turns into EXIT HOLD while holding.
+- Slim status pill (Shift+H or the minus button), draggable, remembers its position.
+- Hold logic is unchanged.
+
 ## 1.2.2
 - Added the GeoFS icon to the Tampermonkey script entry.
 
