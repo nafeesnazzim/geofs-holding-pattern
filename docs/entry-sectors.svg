@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 640" font-family="Arial,Helvetica,sans-serif">
+<rect width="600" height="640" fill="#fff"/>
+<text x="300" y="30" text-anchor="middle" font-size="20" font-weight="700">Entry sectors: right-hand hold</text>
+<text x="300" y="52" text-anchor="middle" font-size="13" fill="#444">Sector = where you arrive from. Inbound course points up.</text>
+<path d="M300,300 L516.1,378.7 A230,230 0 0 1 83.9,221.3 Z" fill="#2e7d32" fill-opacity=".28" stroke="#2e7d32" stroke-width="2"/><text x="251.2" y="434.0" text-anchor="middle" font-size="17" font-weight="700" fill="#1a1a1a">DIRECT</text>
+<path d="M300,300 L83.9,221.3 A230,230 0 0 1 300.0,70.0 Z" fill="#c62828" fill-opacity=".28" stroke="#c62828" stroke-width="2"/><text x="218.2" y="183.2" text-anchor="middle" font-size="17" font-weight="700" fill="#1a1a1a">TEARDROP</text>
+<path d="M300,300 L300.0,70.0 A230,230 0 0 1 516.1,378.7 Z" fill="#1565c0" fill-opacity=".28" stroke="#1565c0" stroke-width="2"/><text x="416.8" y="218.2" text-anchor="middle" font-size="17" font-weight="700" fill="#1a1a1a">PARALLEL</text>
+<g fill="none" stroke="#111" stroke-width="3">
+<path d="M300,430 L300,300 A60,60 0 0 1 420,300 L420,430 A60,60 0 0 1 300,430 Z" stroke-dasharray="0"/></g>
+<path d="M300,380 L300,345" stroke="#111" stroke-width="3" marker-end="url(#a)"/>
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#111"/></marker></defs>
+<circle cx="300" cy="300" r="7" fill="#111"/>
+<text x="286" y="296" text-anchor="end" font-size="15" font-weight="700">FIX</text>
+<text x="312" y="395" font-size="13">inbound</text>
+<text x="428" y="370" font-size="13">outbound</text>
+<text x="300" y="585" text-anchor="middle" font-size="13" fill="#444">Left-hand holds are the mirror image. Sector boundaries: 110° and 290° (relative to inbound track).</text>
+<text x="300" y="610" text-anchor="middle" font-size="13" fill="#444">Direct 180° wide, teardrop 70°, parallel 110°.</text>
+</svg>
