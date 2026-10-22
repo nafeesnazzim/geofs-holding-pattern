@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+- Shift+H now cycles panel, slim pill and hidden. The hold keeps running while hidden.
+- The display state is remembered after a reload.
+- Warns when the chosen fix is the last waypoint (you stay on HDG after the exit).
+- Shows the distance to the chosen fix while idle.
+
 ## 1.3.0
 - Redesigned HOLD panel: glass-cockpit look with a live racetrack diagram that tracks your aircraft and highlights the leg being flown.
 - One context-aware button: ENTER HOLD turns into EXIT HOLD while holding.
