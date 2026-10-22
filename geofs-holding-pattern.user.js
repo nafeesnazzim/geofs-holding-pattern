@@ -9,7 +9,7 @@
 // @supportURL   https://github.com/nafeesnazzim/geofs-holding-pattern/issues
 // @updateURL    https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
 // @downloadURL  https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
-// @version      1.3.0
+// @version      1.3.1
 // @description  Flies a real ICAO racetrack hold on any FMC waypoint: sector-based entries, standard-rate turns, wind-corrected tracks, outbound timing trimmed from the inbound leg, NAV re-engaged on exit.
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
@@ -475,6 +475,7 @@
   #ghold .gh-pill{display:none;align-items:center;gap:8px;padding:8px 12px;cursor:grab;white-space:nowrap}
   #ghold.min .gh-pill{display:flex}
   #ghold.min .gh-head{display:none}
+  #ghold.off{display:none}
   #ghold .gh-pill b{font-weight:600;color:var(--tx)}
   #ghold .gh-pill i{font-style:normal;color:var(--dm)}
   #ghold .gh-top{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:stretch}
@@ -538,7 +539,7 @@
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     const root = document.createElement('div'); root.id = 'ghold';
     root.innerHTML = `
-      <div class="gh-head"><span class="gh-dot"></span><span class="gh-title">HOLD</span><span class="gh-sp"></span><span class="gh-fixname" id="gh-hfix"></span><button class="gh-min" title="Collapse (Shift+H)">&ndash;</button></div>
+      <div class="gh-head"><span class="gh-dot"></span><span class="gh-title">HOLD</span><span class="gh-sp"></span><span class="gh-fixname" id="gh-hfix"></span><button class="gh-min" title="Collapse (Shift+H cycles panel, pill, hidden)">&ndash;</button></div>
       <div class="gh-pill"><span class="gh-dot"></span><span class="gh-title">HOLD</span><i id="gh-pfix"></i><b id="gh-pst">IDLE</b><b id="gh-ptm"></b></div>
       <div class="gh-wrap"><div><div class="gh-body">
         <div class="gh-top">
@@ -589,7 +590,8 @@
       root.style.left = x + 'px'; root.style.top = y + 'px'; root.style.right = 'auto';
     }
     if (typeof saved.x === 'number') place(saved.x, saved.y);
-    if (saved.min) root.classList.add('min');
+    // display mode: 0 = panel, 1 = slim pill, 2 = hidden (the hold keeps running)
+    let mode = saved.mode === 0 || saved.mode === 1 || saved.mode === 2 ? saved.mode : (saved.min ? 1 : 0);
     addEventListener('resize', () => { if (root.style.left) place(parseFloat(root.style.left), parseFloat(root.style.top)); });
 
     // drag (header or pill); a click without movement on the pill expands it
@@ -608,13 +610,14 @@
     addEventListener('mouseup', () => {
       if (!drag) return;
       if (drag.moved) { saved.x = parseFloat(root.style.left); saved.y = parseFloat(root.style.top); save(); }
-      else if (root.classList.contains('min')) setMin(false);
+      else if (mode === 1) setMode(0);
       drag = null;
     });
-    function setMin(v) { root.classList.toggle('min', v); saved.min = v; save(); }
-    $('.gh-min').addEventListener('click', () => setMin(true));
+    function setMode(m) { mode = m; root.classList.toggle('min', m === 1); root.classList.toggle('off', m === 2); saved.mode = m; saved.min = m === 1; save(); }
+    setMode(mode);
+    $('.gh-min').addEventListener('click', () => setMode(1));
     addEventListener('keydown', e => {
-      if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyH' && !/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) setMin(!root.classList.contains('min'));
+      if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyH' && !/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) setMode((mode + 1) % 3);
     });
 
     let dir = 1;
@@ -705,7 +708,12 @@
       root.classList.toggle('turn', active && !!TURN_PH[s.phase]);
       root.classList.toggle('armed', active && !!s.exitPending);
       $('#gh-enter').textContent = !active ? 'ENTER HOLD' : (s.exitPending ? 'EXIT ARMED' : 'EXIT HOLD');
-      $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : '');
+      let idleWarn = '';
+      if (!active) {
+        const arr = geofs.flightPlan.waypointArray || [], i = $('#gh-fix').value;
+        if (i !== '' && arr[+i] && +i === arr.length - 1) idleWarn = 'Last waypoint in the plan: after the exit you stay on HDG';
+      }
+      $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : idleWarn);
       const stTxt = s.idle ? 'Idle' : (PHASE_TXT[s.phase] || s.phase);
       $('#r-status').textContent = stTxt;
       $('#r-status').style.color = active && TURN_PH[s.phase] ? 'var(--am)' : '';
@@ -716,7 +724,14 @@
         else if (s.dist != null) { tl = 'To fix'; tv = s.dist.toFixed(1) + ' NM'; }
       }
       $('#r-tl').textContent = tl; $('#r-timer').textContent = tv;
-      $('#r-fix').textContent = !active || s.dist == null ? '---' : (core.fix.ident || 'FIX') + '  ' + s.dist.toFixed(1) + ' NM  ' + hdg3(s.brg) + '°';
+      let idleDist = null;
+      if (!active) {
+        try {
+          const arr = geofs.flightPlan.waypointArray || [], w = arr[+$('#gh-fix').value], l = geofs.aircraft.instance.llaLocation;
+          if (w && l) idleDist = { id: w.ident || 'FIX', d: gcDistNM(l[0], l[1], w.lat, w.lon) };
+        } catch (e) { idleDist = null; }
+      }
+      $('#r-fix').textContent = idleDist ? idleDist.id + '  ' + idleDist.d.toFixed(1) + ' NM' : !active || s.dist == null ? '---' : (core.fix.ident || 'FIX') + '  ' + s.dist.toFixed(1) + ' NM  ' + hdg3(s.brg) + '°';
       $('#gh-hfix').textContent = active && core.fix ? (core.fix.ident || '') : '';
       $('#r-wca').textContent = s.idle || s.wca == null ? '---' : (Math.abs(s.wca) < 0.5 ? '0°' : Math.abs(s.wca).toFixed(0) + '° ' + (s.wca > 0 ? 'R' : 'L'));
       $('#r-spd').textContent = s.idle ? '---' : (s.speedNote || '---').replace(/^max\s*/i, '');
