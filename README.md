@@ -18,11 +18,12 @@
 
 - **Any FMC waypoint** as the hold fix, chosen from a dropdown.
 - **All three entries:** direct, teardrop and parallel, picked automatically from your arrival track. Left- and right-hand holds.
-- **Standard-rate turns** (3°/s, or 25° bank if that is lower) by steering the heading bug (NAV switches to HDG while holding).
+- **Standard-rate turns** (3°/s, or 25° bank if that is lower) by steering the heading bug.
+- **Follows your route:** with the autopilot on NAV it keeps flying the flight plan to the fix and only switches to HDG about 30 s before it, so waypoints on the way are not skipped.
 - **Wind drift correction** on every leg, with the outbound time trimmed from the measured inbound leg so you actually arrive on time.
 - **Leg time:** AUTO (1 min up to 14 000 ft, 1.5 min above) or set 0.5-5 min.
 - **EFC time (UTC HHMM):** optional expect-further-clearance clock.
-- **ICAO maximum holding speed** shown and applied (230 kt up to 14 000 ft, 240 kt to 20 000 ft, 265 kt to 34 000 ft, M0.83 above), and your old speed is restored on exit.
+- **ICAO maximum holding speed** shown, and applied about 3 minutes before the fix (230 kt up to 14 000 ft, 240 kt to 20 000 ft, 265 kt to 34 000 ft, M0.83 above). Your old speed is restored on exit.
 - **Clean exit:** crosses the fix inbound, then re-engages NAV to the next waypoint with no speed dip.
 - **Sleek avionics-style panel** with a live racetrack diagram that tracks your aircraft. Press **Shift+H** to cycle full panel, slim pill and hidden (the hold keeps running), and drag it anywhere. Silent (no sounds). Units: kt, ft, NM.
 
@@ -42,7 +43,7 @@ Updates arrive automatically through Tampermonkey.
 4. Choose **RIGHT** or **LEFT** turns.
 5. Leave **LEG** empty for AUTO, or type minutes (0.5-5).
 6. Optionally enter the **EFC** as UTC HHMM.
-7. Press **ENTER HOLD**. The panel shows status, timer, wind correction, speed and EFC.
+7. Press **ENTER HOLD**. Keep the autopilot on NAV: the panel shows "Armed, following route" and an ETA until the fix, then flies the hold. The panel shows status, timer, wind correction, speed and EFC.
 8. Press **EXIT HOLD** (the same button) when you are cleared. You leave the hold at the fix and NAV resumes towards the next waypoint.
 
 Turning the autopilot off cancels the hold.
@@ -76,6 +77,7 @@ Max bank stayed at or under about 24° in all flights.
 - Tested with winds up to about 40 kt, the most the GeoFS slider allows.
 - Sluggish heavy aircraft (such as the A380) take about 30 s to roll into the turn. This is deliberate, to keep bank safe.
 - Changing the flight plan while holding may confuse the "next waypoint" on exit.
+- The NAV to HDG handover just before the fix was verified in simulation; please report any aircraft where it turns early or late.
 - Not every aircraft was re-flown on the latest version.
 - Written for GeoFS as it is today. A GeoFS update may break it; please open an issue if so.
 
