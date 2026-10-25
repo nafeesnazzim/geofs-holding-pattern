@@ -9,7 +9,7 @@
 // @supportURL   https://github.com/nafeesnazzim/geofs-holding-pattern/issues
 // @updateURL    https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
 // @downloadURL  https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
-// @version      1.3.1
+// @version      1.4.0
 // @description  Flies a real ICAO racetrack hold on any FMC waypoint: sector-based entries, standard-rate turns, wind-corrected tracks, outbound timing trimmed from the inbound leg, NAV re-engaged on exit.
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
@@ -86,7 +86,11 @@
       this.leadPhase = null; this.phaseT = 0; this.baseLeg = 0; this.lastSetSpeed = 0;
       this.savedSpeed = 0; this.speedChanged = false; this.speedNote = ''; this.lastSpeedT = -99;
       this.s = null; this.geo = null; this.cmdHdg = null;
+      this.navApproach = false; this.warn = '';
     }
+
+    // seconds to the fix at the current ground speed (true airspeed until the ground speed is measured)
+    etaFix() { return this.geo.d / (this.gs > 15 ? this.gs : (this.tas || 150)) * 3600; }
 
     legTime(altFt) { return this.legOverrideS || legTimeAuto(altFt); }
 
@@ -100,9 +104,15 @@
       this.fix = cfg.fix; this.ic = norm360(cfg.ic); this.dir = cfg.dir >= 0 ? 1 : -1;
       this.legOverrideS = cfg.legOverrideS || null;
       this.savedSpeed = ap.speed || 0; this.savedMode = ap.speedMode;
-      this.io.setCourse(Math.round(s.hdg));
-      this.io.setMode('HDG');
-      if (this.io.ap().mode !== 'HDG') { this.reset(); return { ok: false, err: 'Could not switch autopilot to HDG' }; }
+      if (ap.mode === 'NAV') {
+        // keep following the flight plan: HDG is taken over only just before the fix
+        this.navApproach = true;
+      } else {
+        this.io.setCourse(Math.round(s.hdg));
+        this.io.setMode('HDG');
+        if (this.io.ap().mode !== 'HDG') { this.reset(); return { ok: false, err: 'Could not switch autopilot to HDG' }; }
+        this.warn = 'Autopilot was not on NAV: flying direct to the fix';
+      }
       this.outTime = this.legTime(s.altFt);
       this.baseLeg = this.outTime;
       this.phase = 'APPROACH';
@@ -111,9 +121,9 @@
 
     requestExit() {
       if (this.phase === 'IDLE') return;
-      if (this.phase === 'APPROACH') { // not yet in the hold: resume NAV to the fix itself
-        this.io.setMode('NAV');
-        this.finish('Hold cancelled, NAV direct to ' + (this.fix.ident || 'fix'));
+      if (this.phase === 'APPROACH') { // not yet in the hold
+        if (this.navApproach) this.finish('Hold cancelled, still following the route');
+        else { this.io.setMode('NAV'); this.finish('Hold cancelled, NAV direct to ' + (this.fix.ident || 'fix')); }
         return;
       }
       this.exitRequested = true;
@@ -249,11 +259,13 @@
       if (this.phase === 'IDLE') return;
       const ap = this.io.ap();
       if (!ap.on) return this.abort('Autopilot off, hold cancelled');
-      if (ap.mode !== 'HDG') return this.abort('Autopilot mode changed, hold cancelled');
+      if (ap.mode !== (this.phase === 'APPROACH' && this.navApproach ? 'NAV' : 'HDG')) return this.abort('Autopilot mode changed, hold cancelled');
       const t = this.io.now(), s = this.io.read();
       this.update(s, t);
       if (this.dt === 0) return;
-      this.manageSpeed(s, t);
+      // hold speed is applied about 3 minutes before the fix, like the real thing: no braking at the last moment
+      if (this.phase !== 'APPROACH' || this.etaFix() <= 180) this.manageSpeed(s, t);
+      else this.speedNote = 'max ' + maxHoldSpeed(s.altFt).label;
       if (this.phase !== this.leadPhase) { this.leadPhase = this.phase; this.lead = clamp(0.7 * Math.atan(Math.min(3, 1091 * Math.tan(25 * D2R) / this.tas) * this.tas / 1091) * R2D, 3, Number.isFinite(s.bank) ? 8 : 35); this.phaseT = t; }   // every turn starts from a moderate lead
       // watchdog: no phase except the approach may drag on for more than 15 minutes
       if (this.phase !== 'APPROACH' && t - this.phaseT > 900) return this.abort('Hold stalled in ' + this.phase + ', autopilot left on HDG');
@@ -265,6 +277,16 @@
 
       switch (this.phase) {
         case 'APPROACH': {
+          if (this.navApproach) {
+            // NAV flies the route; take over about 30 s out, or at 1.5 NM, or at once if the fix has been passed
+            const ref0 = this.trk != null ? this.trk : s.hdg;
+            const passed = g.d < 6 && Math.abs(norm180(g.b - ref0)) > 90;
+            if (this.etaFix() > 30 && g.d > 1.5 && !passed) break;
+            this.io.setCourse(Math.round(s.hdg));
+            this.io.setMode('HDG');
+            if (this.io.ap().mode !== 'HDG') return this.abort('Could not switch autopilot to HDG, hold cancelled');
+            this.navApproach = false;
+          }
           if (g.d > 0.5) this.approachTrack = g.b;
           const trk = this.approachTrack != null ? this.approachTrack : g.b;
           this.steer(this.trackHdg(trk), 0);
@@ -373,6 +395,10 @@
       if (idle || !this.s || !this.geo) return out;
       const t = this.lastT;
       out.dist = this.geo.d; out.brg = this.geo.b;
+      if (this.phase === 'APPROACH') {
+        out.nav = this.navApproach; out.eta = this.etaFix(); out.warn = this.warn;
+        if (this.navApproach && this.io.findFix && this.io.findFix(this.fix) < 0) out.warn = 'Fix is no longer in the flight plan';
+      }
       out.wca = this.wind.valid ? this.wca(this.phase === 'INBOUND' || this.phase === 'TURN_IN' ? this.ic : norm360(this.ic + 180)) : null;
       out.speedNote = this.speedNote;
       out.cmdHdg = this.cmdHdg;
@@ -476,6 +502,8 @@
   #ghold.min .gh-pill{display:flex}
   #ghold.min .gh-head{display:none}
   #ghold.off{display:none}
+  #ghold.nt,#ghold.nt *{transition:none!important}
+  #ghold.mv{transition:opacity .2s ease,transform .2s ease,left .24s ease,top .24s ease}
   #ghold .gh-pill b{font-weight:600;color:var(--tx)}
   #ghold .gh-pill i{font-style:normal;color:var(--dm)}
   #ghold .gh-top{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:stretch}
@@ -514,6 +542,7 @@
   const pad = (n, w) => String(Math.round(n)).padStart(w, '0');
   const hdg3 = d => pad(norm360(d) === 0 ? 360 : norm360(d), 3);
   const mmss = s => (s == null ? '--:--' : pad(Math.floor(s / 60), 2) + ':' + pad(Math.floor(s % 60), 2));
+  const hms = s => (!Number.isFinite(s) ? '--:--' : s >= 3600 ? Math.floor(s / 3600) + ':' + pad(Math.floor(s % 3600 / 60), 2) + ':' + pad(Math.floor(s % 60), 2) : mmss(s));
   const PHASE_TXT = {
     APPROACH: 'Direct to fix', TURN_OUT: 'Turn outbound', OUTBOUND: 'Outbound', TURN_IN: 'Turn inbound', INBOUND: 'Inbound',
     TD_TURN: 'Teardrop turn', TD_OUT: 'Teardrop out', PAR_TURN: 'Parallel turn', PAR_OUT: 'Parallel out'
@@ -584,8 +613,8 @@
     const KEY = 'geofsHoldPanel';
     let saved = {}; try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
     const save = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* storage unavailable */ } };
-    function place(x, y) {
-      const w = root.offsetWidth || 272, h = root.offsetHeight || 60;
+    function place(x, y, dims) {
+      const w = dims ? dims.w : root.offsetWidth || 272, h = dims ? dims.h : root.offsetHeight || 60;
       x = clamp(x, 4, Math.max(4, innerWidth - w - 4)); y = clamp(y, 4, Math.max(4, innerHeight - h - 4));
       root.style.left = x + 'px'; root.style.top = y + 'px'; root.style.right = 'auto';
     }
@@ -613,8 +642,34 @@
       else if (mode === 1) setMode(0);
       drag = null;
     });
-    function setMode(m) { mode = m; root.classList.toggle('min', m === 1); root.classList.toggle('off', m === 2); saved.mode = m; saved.min = m === 1; save(); }
-    setMode(mode);
+    // Changing the size must not push the panel off screen: the edge nearest to the screen edge stays where it is.
+    let lastRect = null, mvTimer = 0;
+    // The panel's height is animated, so measure the size it will end up with, not the size it has right now.
+    function finalSize(m) {
+      const was = root.classList.contains('min');
+      root.classList.add('nt'); root.classList.toggle('min', m === 1);
+      const sz = { w: root.offsetWidth, h: root.offsetHeight };
+      root.classList.toggle('min', was); void root.offsetWidth; root.classList.remove('nt');
+      return sz;
+    }
+    function setMode(m, initial) {
+      const before = mode !== 2 && root.offsetWidth ? root.getBoundingClientRect() : lastRect;
+      mode = m; saved.mode = m; saved.min = m === 1;
+      if (m === 2) { lastRect = before; root.classList.remove('min'); root.classList.add('off'); save(); return; }
+      root.classList.remove('off');
+      const sz = finalSize(m);
+      if (!initial && before) {
+        // keep the edge that is nearest to the screen edge where it is, so the panel grows into the screen
+        root.classList.add('mv'); clearTimeout(mvTimer); mvTimer = setTimeout(() => root.classList.remove('mv'), 320);
+        place(before.left + before.width / 2 > innerWidth / 2 ? before.right - sz.w : before.left,
+              before.top + before.height / 2 > innerHeight / 2 ? before.bottom - sz.h : before.top, sz);
+        saved.x = parseFloat(root.style.left); saved.y = parseFloat(root.style.top);
+      }
+      root.classList.toggle('min', m === 1);
+      save();
+    }
+    if (mode === 2) setMode(2, true); else { root.classList.toggle('min', mode === 1); if (typeof saved.x === 'number') place(saved.x, saved.y, finalSize(mode)); }
+    if (mode === 2 && typeof saved.x === 'number') place(saved.x, saved.y);
     $('.gh-min').addEventListener('click', () => setMode(1));
     addEventListener('keydown', e => {
       if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyH' && !/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) setMode((mode + 1) % 3);
@@ -701,8 +756,15 @@
       ac.setAttribute('opacity', out ? '.55' : '1'); halo.setAttribute('opacity', out ? '.4' : '1');
     }
 
+    // the panel's content (and so its height) can change: pull it back on screen if it has grown past an edge
+    function keepOnScreen() {
+      if (drag || mode === 2 || !root.offsetWidth) return;
+      const r = root.getBoundingClientRect();
+      if (r.bottom > innerHeight - 3 || r.right > innerWidth - 3 || r.top < 3 || r.left < 3) place(parseFloat(root.style.left) || r.left, parseFloat(root.style.top) || r.top);
+    }
+
     function render() {
-      refreshFixes();
+      refreshFixes(); keepOnScreen();
       const s = core.status(), active = !s.idle;
       root.classList.toggle('run', active);
       root.classList.toggle('turn', active && !!TURN_PH[s.phase]);
@@ -713,11 +775,12 @@
         const arr = geofs.flightPlan.waypointArray || [], i = $('#gh-fix').value;
         if (i !== '' && arr[+i] && +i === arr.length - 1) idleWarn = 'Last waypoint in the plan: after the exit you stay on HDG';
       }
-      $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : idleWarn);
-      const stTxt = s.idle ? 'Idle' : (PHASE_TXT[s.phase] || s.phase);
+      $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : (s.warn || idleWarn));
+      const armed = active && s.phase === 'APPROACH' && s.nav;   // still following the route, hold not started
+      const stTxt = s.idle ? 'Idle' : (armed ? 'Armed, following route' : (PHASE_TXT[s.phase] || s.phase));
       $('#r-status').textContent = stTxt;
       $('#r-status').style.color = active && TURN_PH[s.phase] ? 'var(--am)' : '';
-      $('#r-entry').textContent = s.entry || '';
+      $('#r-entry').textContent = active && s.phase === 'APPROACH' && s.eta != null ? 'ETA ' + hms(s.eta) : (s.entry || '');
       let tl = 'Timer', tv = '--:--';
       if (active) {
         if (s.timerLabel) { tl = s.timerLabel; tv = mmss(s.timer); }
@@ -745,7 +808,7 @@
       }
       // slim pill
       $('#gh-pfix').textContent = active && core.fix ? (core.fix.ident || 'FIX') : '';
-      $('#gh-pst').textContent = !active ? 'IDLE' : (PHASE_PILL[s.phase] || '') + (s.entry ? ' · ' + s.entry.slice(0, 3) : '');
+      $('#gh-pst').textContent = !active ? 'IDLE' : (armed ? 'ARMED' : (PHASE_PILL[s.phase] || '')) + (s.entry ? ' · ' + s.entry.slice(0, 3) : '');
       $('#gh-ptm').textContent = active && (s.timerLabel ? mmss(s.timer) : (s.dist != null ? s.dist.toFixed(1) + ' NM' : ''));
       drawDiagram(s);
     }
