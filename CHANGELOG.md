@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+- The hold now follows your flight plan: with the autopilot on NAV it stays on NAV until about 30 s before the fix, then takes over on HDG. It no longer flies straight to the fix and skips the waypoints in between. If the autopilot is not on NAV it still flies direct, with a warning.
+- The ICAO hold speed limit is applied about 3 minutes before the fix instead of the moment you press the button.
+- New status while approaching: "Armed, following route", with an ETA to the fix and an ARMED pill. A warning appears if the fix is no longer in the flight plan.
+- Exiting before you reach the fix leaves the autopilot on NAV.
+- Fixed: expanding the pill at the edge of the screen pushed the panel off screen. It now grows into the screen and shrinks back into the same corner, and it is pulled back on screen if it grows past an edge or the window shrinks.
+
 ## 1.3.1
 - Shift+H now cycles panel, slim pill and hidden. The hold keeps running while hidden.
 - The display state is remembered after a reload.
