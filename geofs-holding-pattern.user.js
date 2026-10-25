@@ -9,7 +9,7 @@
 // @supportURL   https://github.com/nafeesnazzim/geofs-holding-pattern/issues
 // @updateURL    https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
 // @downloadURL  https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
-// @version      1.4.0
+// @version      1.5.0
 // @description  Flies a real ICAO racetrack hold on any FMC waypoint: sector-based entries, standard-rate turns, wind-corrected tracks, outbound timing trimmed from the inbound leg, NAV re-engaged on exit.
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
@@ -86,11 +86,32 @@
       this.leadPhase = null; this.phaseT = 0; this.baseLeg = 0; this.lastSetSpeed = 0;
       this.savedSpeed = 0; this.speedChanged = false; this.speedNote = ''; this.lastSpeedT = -99;
       this.s = null; this.geo = null; this.cmdHdg = null;
-      this.navApproach = false; this.warn = '';
+      this.navApproach = false; this.warn = ''; this.route = null;
+      this.maxKt = null; this.minAltFt = null; this.minAltLabel = ''; this.legNM = null; this.speedWarn = ''; this.altWarn = '';
     }
 
-    // seconds to the fix at the current ground speed (true airspeed until the ground speed is measured)
-    etaFix() { return this.geo.d / (this.gs > 15 ? this.gs : (this.tas || 150)) * 3600; }
+    // seconds to the fix at the current ground speed (true airspeed until the ground speed is measured), along the route when it is known
+    etaFix() { const d = this.route && this.route.known ? this.route.dist : this.geo.d; return d / (this.gs > 15 ? this.gs : (this.tas || 150)) * 3600; }
+
+    // Where the aircraft is on the flight plan: the distance to the fix along the route, and whether the fix is already behind.
+    // GeoFS's own NAV flies to trackedWaypoint and moves on to the next one when it is closer than switchNM.
+    routeInfo() {
+      const io = this.io, g = this.geo, none = { known: false, dist: g.d, behind: false, tracked: -1, idx: -1 };
+      if (!io.tracked || !io.plan || this.fix.ppos) return none;
+      const idx = io.findFix ? io.findFix(this.fix) : this.fix.index, tr = io.tracked(), plan = io.plan();
+      if (idx < 0 || tr < 0 || !plan[tr] || !plan[idx]) return none;
+      if (tr > idx) return { known: true, dist: g.d, behind: true, tracked: tr, idx };
+      let dist = gcDistNM(this.s.lat, this.s.lon, plan[tr].lat, plan[tr].lon);
+      for (let i = tr; i < idx; i++) dist += gcDistNM(plan[i].lat, plan[i].lon, plan[i + 1].lat, plan[i + 1].lon);
+      return { known: true, dist, behind: false, tracked: tr, idx };
+    }
+
+    // ICAO table, lowered to the chart's own limit when one was entered
+    speedLimit(altFt) {
+      const m = maxHoldSpeed(altFt), user = this.maxKt;
+      const kt = m.kt == null ? user : (user ? Math.min(m.kt, user) : m.kt);
+      return { kt, label: kt != null ? kt + ' kt' : m.label };
+    }
 
     legTime(altFt) { return this.legOverrideS || legTimeAuto(altFt); }
 
@@ -103,19 +124,32 @@
       this.reset();
       this.fix = cfg.fix; this.ic = norm360(cfg.ic); this.dir = cfg.dir >= 0 ? 1 : -1;
       this.legOverrideS = cfg.legOverrideS || null;
+      this.legNM = cfg.legNM || null; this.maxKt = cfg.maxKt || null;
+      this.minAltFt = cfg.minAltFt || null; this.minAltLabel = cfg.minAltLabel || (cfg.minAltFt ? cfg.minAltFt + ' ft' : '');
       this.savedSpeed = ap.speed || 0; this.savedMode = ap.speedMode;
-      if (ap.mode === 'NAV') {
+      const ppos = !!this.fix.ppos;   // "hold here": the fix is where the aircraft is now
+      if (ap.mode === 'NAV' && !ppos) {
+        // refuse a fix that is already behind the aircraft on the route
+        if (this.io.tracked && this.io.plan) {
+          const idx = this.io.findFix ? this.io.findFix(this.fix) : this.fix.index;
+          if (idx >= 0 && this.io.tracked() > idx) { this.reset(); return { ok: false, err: 'That fix is behind you on the route: pick a waypoint ahead' }; }
+        }
         // keep following the flight plan: HDG is taken over only just before the fix
         this.navApproach = true;
       } else {
         this.io.setCourse(Math.round(s.hdg));
         this.io.setMode('HDG');
         if (this.io.ap().mode !== 'HDG') { this.reset(); return { ok: false, err: 'Could not switch autopilot to HDG' }; }
-        this.warn = 'Autopilot was not on NAV: flying direct to the fix';
+        if (!ppos) this.warn = 'Autopilot was not on NAV: flying direct to the fix';
       }
       this.outTime = this.legTime(s.altFt);
       this.baseLeg = this.outTime;
       this.phase = 'APPROACH';
+      if (ppos) {   // already at the fix: go straight into the entry for the heading we are flying
+        this.entry = classifyEntry(s.hdg, this.ic, this.dir);
+        this.entryPending = this.entry !== 'DIRECT';
+        this.phase = { DIRECT: 'TURN_OUT', TEARDROP: 'TD_TURN', PARALLEL: 'PAR_TURN' }[this.entry];
+      }
       return { ok: true };
     }
 
@@ -178,6 +212,7 @@
         along: p.e * Math.sin(th) + p.n * Math.cos(th),   // + = beyond the fix on the inbound course
         cross: p.e * Math.cos(th) - p.n * Math.sin(th)    // + = right of the inbound course
       };
+      this.route = this.phase === 'APPROACH' ? this.routeInfo() : null;
     }
 
     // wind correction angle for a desired ground track
@@ -240,18 +275,18 @@
     manageSpeed(s, t) {
       if (t - this.lastSpeedT < 2) return;
       this.lastSpeedT = t;
-      const m = maxHoldSpeed(s.altFt), ap = this.io.ap();
-      this.speedNote = 'max ' + m.label;
+      const m = this.speedLimit(s.altFt), ap = this.io.ap();
+      this.speedNote = 'max ' + m.label; this.speedWarn = '';
       if (m.kt == null) {
         // above FL340 the ICAO limit is Mach 0.83: apply it when the autopilot holds Mach, otherwise leave the pilot to set it
         if (ap.speedMode === 'mach') {
           if (ap.speed > 0.83) { this.io.setSpeed(0.83); this.speedChanged = true; this.lastSetSpeed = 0.83; this.speedModeSet = 'mach'; }
-        } else this.speedNote += ' (set Mach by hand)';
+        } else { this.speedNote += ' (set Mach by hand)'; this.speedWarn = 'Set the autopilot speed by hand: Mach 0.83 at most'; }
         return;
       }
-      if (ap.speedMode !== 'knots') { this.speedNote += ' (AP not in knots)'; return; }
+      if (ap.speedMode !== 'knots') { this.speedNote += ' (AP not in knots)'; this.speedWarn = 'Autopilot speed is not in knots: set it to ' + m.kt + ' kt or less by hand'; return; }
       if (ap.speed > 0 && ap.speed > m.kt) { this.io.setSpeed(m.kt); this.speedChanged = true; this.lastSetSpeed = m.kt; this.speedModeSet = 'knots'; }
-      else if (!(ap.speed > 0) && s.kias > m.kt + 2) this.speedNote += ' (reduce by hand)';
+      else if (!(ap.speed > 0) && s.kias > m.kt + 2) { this.speedNote += ' (reduce by hand)'; this.speedWarn = 'Reduce speed to ' + m.kt + ' kt by hand'; }
     }
 
     /* ---- state machine ---- */
@@ -265,7 +300,12 @@
       if (this.dt === 0) return;
       // hold speed is applied about 3 minutes before the fix, like the real thing: no braking at the last moment
       if (this.phase !== 'APPROACH' || this.etaFix() <= 180) this.manageSpeed(s, t);
-      else this.speedNote = 'max ' + maxHoldSpeed(s.altFt).label;
+      else {
+        const m = this.speedLimit(s.altFt);
+        this.speedNote = 'max ' + m.label;
+        this.speedWarn = m.kt != null && ap.speedMode !== 'knots' ? 'Autopilot speed is not in knots: set it to ' + m.kt + ' kt or less by hand' : '';
+      }
+      this.altWarn = this.minAltFt && s.altFt < this.minAltFt - 150 ? 'Below the minimum holding altitude, ' + this.minAltLabel : '';
       if (this.phase !== this.leadPhase) { this.leadPhase = this.phase; this.lead = clamp(0.7 * Math.atan(Math.min(3, 1091 * Math.tan(25 * D2R) / this.tas) * this.tas / 1091) * R2D, 3, Number.isFinite(s.bank) ? 8 : 35); this.phaseT = t; }   // every turn starts from a moderate lead
       // watchdog: no phase except the approach may drag on for more than 15 minutes
       if (this.phase !== 'APPROACH' && t - this.phaseT > 900) return this.abort('Hold stalled in ' + this.phase + ', autopilot left on HDG');
@@ -278,10 +318,14 @@
       switch (this.phase) {
         case 'APPROACH': {
           if (this.navApproach) {
-            // NAV flies the route; take over about 30 s out, or at 1.5 NM, or at once if the fix has been passed
-            const ref0 = this.trk != null ? this.trk : s.hdg;
-            const passed = g.d < 6 && Math.abs(norm180(g.b - ref0)) > 90;
-            if (this.etaFix() > 30 && g.d > 1.5 && !passed) break;
+            // NAV flies the route. GeoFS moves NAV on to the next waypoint once it is closer than switchNM (DMEMargin x altitude),
+            // so the hold has to take over before that: about 30 s out, or just outside that distance, whichever is first.
+            const R = this.route, ref0 = this.trk != null ? this.trk : s.hdg;
+            const passed = g.d < 6 && Math.abs(norm180(g.b - ref0)) > 90 && (!R.known || R.tracked >= R.idx);
+            if (R.known && R.behind && !passed) return this.abort('The fix is behind you on the route, hold cancelled');
+            const sw = this.io.switchNM ? this.io.switchNM() : 0;
+            const near = R.known ? (R.tracked === R.idx && g.d <= sw + 0.7) : g.d <= 1.5;
+            if (this.etaFix() > 30 && !near && !passed) break;
             this.io.setCourse(Math.round(s.hdg));
             this.io.setMode('HDG');
             if (this.io.ap().mode !== 'HDG') return this.abort('Could not switch autopilot to HDG, hold cancelled');
@@ -311,7 +355,7 @@
             if (g.along <= 0 || t - this.establishedAt > 45) { this.timerRunning = true; this.timerStart = t; this.outGs = { s: 0, t: 0 }; }
           } else {
             this.outGs.s += this.gs * this.dt; this.outGs.t += this.dt;
-            if (t - this.timerStart >= this.outTime) { this.phase = 'TURN_IN'; this.turnInDir = dir; }
+            if (this.legNM ? -g.along >= this.legNM : t - this.timerStart >= this.outTime) { this.phase = 'TURN_IN'; this.turnInDir = dir; }
           }
           break;
         }
@@ -321,7 +365,7 @@
         }
         case 'TD_OUT': {
           this.steer(this.trackHdg(O - dir * 30), 0);
-          if (t - this.timerStart >= this.legTime(s.altFt)) { this.phase = 'TURN_IN'; this.turnInDir = dir; }
+          if (this.legNM ? -g.along >= this.legNM : t - this.timerStart >= this.legTime(s.altFt)) { this.phase = 'TURN_IN'; this.turnInDir = dir; }
           break;
         }
         case 'PAR_TURN': {
@@ -330,12 +374,12 @@
         }
         case 'PAR_OUT': {
           this.steer(this.trackHdg(O), 0);
-          if (t - this.timerStart >= this.legTime(s.altFt)) { this.phase = 'TURN_IN'; this.turnInDir = -dir; }
+          if (this.legNM ? -g.along >= this.legNM : t - this.timerStart >= this.legTime(s.altFt)) { this.phase = 'TURN_IN'; this.turnInDir = -dir; }
           break;
         }
         case 'TURN_IN': {
           if (this.steer(this.inboundHdg(), this.turnInDir) <= 3) {
-            this.phase = 'INBOUND'; this.inStart = t; this.lastAlong = null; this.inboundTimed = !this.entryPending;
+            this.phase = 'INBOUND'; this.inStart = t; this.lastAlong = null; this.inboundTimed = !this.entryPending && !this.legNM;
             this.inGs = { s: 0, t: 0 };
           }
           break;
@@ -377,6 +421,7 @@
     finishExit() {
       // find the fix in the flight plan as it is now: the pilot may have edited the plan during the hold
       const name = this.fix.ident || 'fix';
+      if (this.fix.ppos) return this.finish('Left the hold at present position, autopilot left on HDG');
       const idx = this.io.findFix ? this.io.findFix(this.fix) : this.fix.index;
       if (idx < 0) this.finish('Left the hold at ' + name + ', but it is no longer in the flight plan: autopilot left on HDG');
       else if (this.io.hasNext(idx)) {
@@ -397,8 +442,10 @@
       out.dist = this.geo.d; out.brg = this.geo.b;
       if (this.phase === 'APPROACH') {
         out.nav = this.navApproach; out.eta = this.etaFix(); out.warn = this.warn;
-        if (this.navApproach && this.io.findFix && this.io.findFix(this.fix) < 0) out.warn = 'Fix is no longer in the flight plan';
+        if (this.route && this.route.known) out.routeDist = this.route.dist;
+        if (this.navApproach && !this.fix.ppos && this.io.findFix && this.io.findFix(this.fix) < 0) out.warn = 'Fix is no longer in the flight plan';
       }
+      out.speedWarn = this.speedWarn; out.altWarn = this.altWarn;
       out.wca = this.wind.valid ? this.wca(this.phase === 'INBOUND' || this.phase === 'TURN_IN' ? this.ic : norm360(this.ic + 180)) : null;
       out.speedNote = this.speedNote;
       out.cmdHdg = this.cmdHdg;
@@ -406,6 +453,7 @@
         const total = this.phase === 'OUTBOUND' ? this.outTime : this.legTime(this.s.altFt);
         out.timerLabel = 'OUTBOUND';
         out.timer = this.timerRunning ? Math.max(0, total - (t - this.timerStart)) : null;
+        if (this.legNM) out.timerNM = this.timerRunning ? Math.max(0, this.legNM + this.geo.along) : null;   // distance legs count down in NM
       } else if (this.phase === 'INBOUND') {
         out.timerLabel = 'TO FIX';
         out.timer = this.gs > 20 ? Math.max(0, -this.geo.along / this.gs * 3600) : null;
@@ -413,7 +461,7 @@
       out.dir = this.dir; out.gs = this.gs;
       out.along = this.geo.along; out.cross = this.geo.cross;
       { const rate = Math.min(3, 1091 * Math.tan(25 * D2R) / (this.tas || this.gs || 200)); out.turnR = this.gs > 20 ? (this.gs / 3600) / (rate * D2R) : null; }   // turn radius in NM, for the diagram
-      out.legNM = this.gs > 20 ? this.gs * (this.outTime || this.legTime(this.s.altFt)) / 3600 : null;
+      out.legNM = this.legNM || (this.gs > 20 ? this.gs * (this.outTime || this.legTime(this.s.altFt)) / 3600 : null);
       out.lastInboundErr = this.lastInboundErr;
       out.outTime = this.outTime;
       return out;
@@ -459,6 +507,10 @@
       setMode: m => geofs.autopilot.setMode(m),
       setSpeed: kt => geofs.autopilot.setSpeed(kt),
       hasNext: i => i + 1 < geofs.flightPlan.waypointArray.length,
+      // the waypoint GeoFS's NAV is flying to now, and the distance at which it moves on to the next one (same formula as flightPlan.update)
+      tracked: () => { const w = geofs.flightPlan.trackedWaypoint; return w && Number.isFinite(w.id) ? w.id : -1; },
+      plan: () => geofs.flightPlan.waypointArray || [],
+      switchNM: () => { const v = geofs.flightPlan.DMEMargin * geofs.aircraft.instance.llaLocation[2]; return Number.isFinite(v) ? clamp(v, 1, 100) : 1; },
       findFix: f => {
         const a = geofs.flightPlan.waypointArray || [];
         for (let i = 0; i < a.length; i++) if (a[i].ident === f.ident && Math.abs(a[i].lat - f.lat) < 1e-4 && Math.abs(a[i].lon - f.lon) < 1e-4) return i;
@@ -510,7 +562,7 @@
   #ghold .gh-dia{position:relative;border:1px solid var(--ln);border-radius:10px;background:radial-gradient(circle at 50% 40%,rgba(62,230,214,.07),rgba(0,0,0,0) 70%),rgba(0,0,0,.28);overflow:hidden}
   #ghold .gh-dia svg{display:block;width:100%;height:104px}
   #ghold .gh-dia .gh-cap{position:absolute;left:0;right:0;bottom:3px;text-align:center;font-size:9px;letter-spacing:.06em;color:var(--dm)}
-  #ghold .gh-info{display:flex;flex-direction:column;justify-content:space-between;min-width:0}
+  #ghold .gh-info{display:flex;flex-direction:column;justify-content:space-between;gap:6px;min-width:0}
   #ghold .gh-lbl{font-size:9.5px;letter-spacing:.14em;color:var(--dm);text-transform:uppercase}
   #ghold #r-status{font-weight:700;font-size:13px;letter-spacing:.02em;margin-top:2px;transition:color .2s}
   #ghold .gh-chip{display:inline-block;margin-top:4px;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--c);background:var(--c2);border:1px solid rgba(62,230,214,.3)}
@@ -537,6 +589,10 @@
   #ghold #gh-msg{min-height:0;color:var(--am);font-size:11.5px;line-height:1.3}
   #ghold #gh-msg:empty{display:none}
   #ghold .amber{color:var(--am)!important}#ghold .red{color:var(--rd)!important}
+  #ghold .gh-more{align-self:flex-start;margin:-4px 0 -2px;padding:0;border:0;background:none;color:var(--dm);font:inherit;font-size:10.5px;letter-spacing:.06em;cursor:pointer}
+  #ghold .gh-more:hover{color:var(--c)}
+  #ghold .gh-extra{display:none}
+  #ghold.more .gh-extra{display:grid}
   `;
 
   const pad = (n, w) => String(Math.round(n)).padStart(w, '0');
@@ -597,8 +653,13 @@
           <label class="gh-f gh-lock"><span class="gh-lbl">Fix</span><select id="gh-fix"></select></label>
           <label class="gh-f gh-lock"><span class="gh-lbl">Inbound crs</span><input id="gh-crs" inputmode="numeric" maxlength="3" placeholder="270"></label>
           <div class="gh-f wide gh-lock"><span class="gh-lbl">Turns</span><span class="gh-seg"><button data-dir="1" class="on">RIGHT</button><button data-dir="-1">LEFT</button></span></div>
-          <label class="gh-f gh-lock"><span class="gh-lbl">Leg (min)</span><input id="gh-leg" placeholder="AUTO"></label>
+          <label class="gh-f gh-lock"><span class="gh-lbl">Leg (min or NM)</span><input id="gh-leg" placeholder="AUTO, 2 or 5NM"></label>
           <label class="gh-f"><span class="gh-lbl">EFC (UTC)</span><input id="gh-efc" inputmode="numeric" maxlength="4" placeholder="HHMM"></label>
+        </div>
+        <button class="gh-more" id="gh-more" type="button">More options</button>
+        <div class="gh-form gh-extra">
+          <label class="gh-f gh-lock"><span class="gh-lbl">Max spd (kt)</span><input id="gh-mspd" inputmode="numeric" maxlength="3" placeholder="AUTO"></label>
+          <label class="gh-f gh-lock"><span class="gh-lbl">Min alt</span><input id="gh-malt" placeholder="FL90 or 9000"></label>
         </div>
         <button id="gh-enter">ENTER HOLD</button>
         <div id="gh-msg"></div>
@@ -676,9 +737,37 @@
     });
 
     let dir = 1;
-    root.querySelectorAll('.gh-seg button').forEach(b => b.addEventListener('click', () => {
-      dir = +b.dataset.dir; root.querySelectorAll('.gh-seg button').forEach(x => x.classList.toggle('on', x === b));
-    }));
+    function setDir(d) { dir = d; root.querySelectorAll('.gh-seg button').forEach(x => x.classList.toggle('on', +x.dataset.dir === d)); }
+    root.querySelectorAll('.gh-seg button').forEach(b => b.addEventListener('click', () => setDir(+b.dataset.dir)));
+
+    // "More options" row (max speed, min altitude), remembered
+    function setMore(on) { root.classList.toggle('more', on); $('#gh-more').textContent = on ? 'Fewer options' : 'More options'; saved.more = on; save(); }
+    $('#gh-more').addEventListener('click', () => setMore(!root.classList.contains('more')));
+    if (saved.more) setMore(true);
+
+    // the settings used for each fix are remembered and refilled when you pick it again
+    function memKey() {
+      const arr = geofs.flightPlan.waypointArray || [], v = $('#gh-fix').value, w = arr[+v];
+      return v === 'here' || !w ? null : (w.ident || 'WPT') + '@' + (+w.lat).toFixed(3) + ',' + (+w.lon).toFixed(3);
+    }
+    function recall() {
+      if (core.phase !== 'IDLE') return;
+      const k = memKey(), m = k && saved.fixes && saved.fixes[k];
+      if (m) {
+        $('#gh-crs').value = m.crs || ''; setDir(m.dir >= 0 ? 1 : -1);
+        $('#gh-leg').value = m.leg || ''; $('#gh-mspd').value = m.spd || ''; $('#gh-malt').value = m.alt || '';
+        if (m.spd || m.alt) setMore(true);
+      } else if ($('#gh-fix').value === 'here' && !$('#gh-crs').value.trim()) {
+        $('#gh-crs').value = pad(norm360(geofs.animation.values.heading360) || 360, 3);   // hold here: default to the course we are flying
+      }
+    }
+    $('#gh-fix').addEventListener('change', recall);
+    function remember(k, v) {
+      if (!k) return;
+      saved.fixes = saved.fixes || {}; delete saved.fixes[k]; saved.fixes[k] = v;
+      const keys = Object.keys(saved.fixes); while (keys.length > 40) delete saved.fixes[keys.shift()];
+      save();
+    }
 
     // FMC waypoint dropdown, rebuilt only when the flight plan changes
     let sig = '';
@@ -687,9 +776,11 @@
       const s2 = arr.map(w => w.ident + w.lat + w.lon).join('|');
       if (s2 === sig) return; sig = s2;
       const sel = $('#gh-fix'), keep = sel.value;
-      sel.innerHTML = arr.length ? '' : '<option value="">no flight plan</option>';
+      sel.innerHTML = '';
       arr.forEach((w, i) => { const o = document.createElement('option'); o.value = i; o.textContent = (i + 1) + '  ' + (w.ident || 'WPT'); sel.appendChild(o); });
-      if (keep !== '' && arr[keep]) sel.value = keep;
+      const here = document.createElement('option'); here.value = 'here'; here.textContent = 'Present position'; sel.appendChild(here);
+      if (keep === 'here' || (keep !== '' && arr[keep])) sel.value = keep;
+      if (!$('#gh-crs').value.trim()) recall();
     }
 
     function efcMs() {
@@ -704,15 +795,30 @@
     }
 
     function enterHold() {
-      const arr = geofs.flightPlan.waypointArray || [], idx = +$('#gh-fix').value, w = arr[idx];
+      const arr = geofs.flightPlan.waypointArray || [], v = $('#gh-fix').value, here = v === 'here', idx = +v, w = arr[idx];
       const crsTxt = $('#gh-crs').value.trim(), crs = +crsTxt;
-      if (!w) return setMsg('Pick a holding fix from the flight plan');
+      if (!here && !w) return setMsg('Pick a holding fix from the flight plan');
       if (!/^\d{1,3}$/.test(crsTxt) || crs > 360) return setMsg('Inbound course must be 0 to 360');
-      const legTxt = $('#gh-leg').value.trim();
-      let legS = null;
-      if (legTxt && legTxt.toUpperCase() !== 'AUTO') { const m = parseFloat(legTxt); if (!(m >= 0.5 && m <= 5)) return setMsg('Leg time: AUTO or 0.5 to 5 min'); legS = m * 60; }
-      const r = core.start({ fix: { index: idx, ident: w.ident, lat: w.lat, lon: w.lon }, ic: crs, dir, legOverrideS: legS });
+      const legTxt = $('#gh-leg').value.trim(), spdTxt = $('#gh-mspd').value.trim(), altTxt = $('#gh-malt').value.trim().toUpperCase().replace(/\s+/g, '');
+      let legS = null, legNM = null, maxKt = null, minAltFt = null, minAltLabel = '';
+      if (legTxt && legTxt.toUpperCase() !== 'AUTO') {
+        const nm = /^(\d+(?:\.\d+)?)\s*NM$/i.exec(legTxt);
+        if (nm) { legNM = parseFloat(nm[1]); if (!(legNM >= 1 && legNM <= 30)) return setMsg('Leg distance: 1 to 30 NM'); }
+        else { const m = /^\d+(?:\.\d+)?$/.test(legTxt) ? parseFloat(legTxt) : NaN; if (!(m >= 0.5 && m <= 5)) return setMsg('Leg: AUTO, 0.5 to 5 min, or a distance such as 5NM'); legS = m * 60; }
+      }
+      if (spdTxt && spdTxt.toUpperCase() !== 'AUTO') { maxKt = /^\d{3}$/.test(spdTxt) ? +spdTxt : NaN; if (!(maxKt >= 100 && maxKt <= 400)) return setMsg('Max speed: 100 to 400 kt, or leave empty'); }
+      if (altTxt) {
+        let m;
+        if ((m = /^(?:FL)?(\d{2,3})$/.exec(altTxt))) { minAltFt = +m[1] * 100; minAltLabel = 'FL' + m[1]; }
+        else if (/^\d{4,5}$/.test(altTxt)) { minAltFt = +altTxt; minAltLabel = altTxt + ' ft'; }
+        else return setMsg('Min altitude: FL90 or 9000, or leave empty');
+      }
+      let fix;
+      if (here) { const l = geofs.aircraft.instance.llaLocation; fix = { index: -1, ident: 'PPOS', ppos: true, lat: l[0], lon: l[1] }; }
+      else fix = { index: idx, ident: w.ident, lat: w.lat, lon: w.lon };
+      const r = core.start({ fix, ic: crs, dir, legOverrideS: legS, legNM, maxKt, minAltFt, minAltLabel });
       setMsg(r.ok ? '' : r.err);
+      if (r.ok) remember(memKey(), { crs: crsTxt, dir, leg: legTxt, spd: spdTxt, alt: $('#gh-malt').value.trim() });
     }
     // one context-aware button: ENTER HOLD when idle, EXIT HOLD while holding
     $('#gh-enter').addEventListener('click', () => { if (core.phase === 'IDLE') enterHold(); else core.requestExit(); });
@@ -772,10 +878,11 @@
       $('#gh-enter').textContent = !active ? 'ENTER HOLD' : (s.exitPending ? 'EXIT ARMED' : 'EXIT HOLD');
       let idleWarn = '';
       if (!active) {
-        const arr = geofs.flightPlan.waypointArray || [], i = $('#gh-fix').value;
-        if (i !== '' && arr[+i] && +i === arr.length - 1) idleWarn = 'Last waypoint in the plan: after the exit you stay on HDG';
+        const arr = geofs.flightPlan.waypointArray || [], i = $('#gh-fix').value, tw = geofs.flightPlan.trackedWaypoint;
+        if (i !== '' && arr[+i] && tw && Number.isFinite(tw.id) && +i < tw.id && geofs.autopilot.mode === 'NAV') idleWarn = 'This fix is behind you on the route';
+        else if (i !== '' && arr[+i] && +i === arr.length - 1) idleWarn = 'Last waypoint in the plan: after the exit you stay on HDG';
       }
-      $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : (s.warn || idleWarn));
+      $('#gh-msg').textContent = s.msg || (s.exitPending ? 'Exit armed: will leave from the fix on the inbound leg' : (s.warn || s.altWarn || s.speedWarn || idleWarn));
       const armed = active && s.phase === 'APPROACH' && s.nav;   // still following the route, hold not started
       const stTxt = s.idle ? 'Idle' : (armed ? 'Armed, following route' : (PHASE_TXT[s.phase] || s.phase));
       $('#r-status').textContent = stTxt;
@@ -783,8 +890,8 @@
       $('#r-entry').textContent = active && s.phase === 'APPROACH' && s.eta != null ? 'ETA ' + hms(s.eta) : (s.entry || '');
       let tl = 'Timer', tv = '--:--';
       if (active) {
-        if (s.timerLabel) { tl = s.timerLabel; tv = mmss(s.timer); }
-        else if (s.dist != null) { tl = 'To fix'; tv = s.dist.toFixed(1) + ' NM'; }
+        if (s.timerLabel) { tl = s.timerLabel; tv = s.timerNM !== undefined ? (s.timerNM == null ? '-- NM' : s.timerNM.toFixed(1) + ' NM') : mmss(s.timer); }
+        else if (s.dist != null) { tl = 'To fix'; tv = (s.routeDist != null ? s.routeDist : s.dist).toFixed(1) + ' NM'; }
       }
       $('#r-tl').textContent = tl; $('#r-timer').textContent = tv;
       let idleDist = null;
@@ -798,6 +905,7 @@
       $('#gh-hfix').textContent = active && core.fix ? (core.fix.ident || '') : '';
       $('#r-wca').textContent = s.idle || s.wca == null ? '---' : (Math.abs(s.wca) < 0.5 ? '0°' : Math.abs(s.wca).toFixed(0) + '° ' + (s.wca > 0 ? 'R' : 'L'));
       $('#r-spd').textContent = s.idle ? '---' : (s.speedNote || '---').replace(/^max\s*/i, '');
+      $('#r-spd').className = 'gh-num' + (!s.idle && s.speedWarn ? ' amber' : '');
       const ms = efcMs(), e = $('#r-efc');
       e.className = 'gh-num';
       if (ms == null) e.textContent = '---';
@@ -809,7 +917,7 @@
       // slim pill
       $('#gh-pfix').textContent = active && core.fix ? (core.fix.ident || 'FIX') : '';
       $('#gh-pst').textContent = !active ? 'IDLE' : (armed ? 'ARMED' : (PHASE_PILL[s.phase] || '')) + (s.entry ? ' · ' + s.entry.slice(0, 3) : '');
-      $('#gh-ptm').textContent = active && (s.timerLabel ? mmss(s.timer) : (s.dist != null ? s.dist.toFixed(1) + ' NM' : ''));
+      $('#gh-ptm').textContent = active && (s.timerLabel ? (s.timerNM !== undefined ? (s.timerNM == null ? '-- NM' : s.timerNM.toFixed(1) + ' NM') : mmss(s.timer)) : (s.dist != null ? (s.routeDist != null ? s.routeDist : s.dist).toFixed(1) + ' NM' : ''));
       drawDiagram(s);
     }
     return render;
