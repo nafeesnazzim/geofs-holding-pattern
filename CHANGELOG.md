@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0
+- The approach now follows GeoFS's own waypoint rule. NAV moves on to the next waypoint once it is closer than DMEMargin x altitude (about 6 NM at FL350), so the hold takes over just outside that distance, before NAV turns away from the fix.
+- The distance and ETA to the fix are measured along the route, not in a straight line. A route that doubles back no longer hands over early.
+- A fix that is already behind you on the route is refused. If the route moves past the fix while armed, the hold is cancelled with a message.
+- New "More options": MAX SPD (a chart limit, which can only lower the ICAO limit) and MIN ALT (FL90 or 9000). An amber warning appears below the minimum altitude.
+- Amber warning when the autopilot speed is not in knots. The hold never changes your speed mode.
+- The leg can be a distance: type 5NM instead of minutes, and the panel counts down in NM.
+- New "Present position" entry in the fix list: hold right here, right now. The course defaults to your heading.
+- The settings you used for each fix are remembered and refilled when you pick it again.
+
 ## 1.4.0
 - The hold now follows your flight plan: with the autopilot on NAV it stays on NAV until about 30 s before the fix, then takes over on HDG. It no longer flies straight to the fix and skips the waypoints in between. If the autopilot is not on NAV it still flies direct, with a warning.
 - The ICAO hold speed limit is applied about 3 minutes before the fix instead of the moment you press the button.
