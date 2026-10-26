@@ -9,7 +9,7 @@
 // @supportURL   https://github.com/nafeesnazzim/geofs-holding-pattern/issues
 // @updateURL    https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
 // @downloadURL  https://raw.githubusercontent.com/nafeesnazzim/geofs-holding-pattern/main/geofs-holding-pattern.user.js
-// @version      1.5.0
+// @version      1.5.1
 // @description  Flies a real ICAO racetrack hold on any FMC waypoint: sector-based entries, standard-rate turns, wind-corrected tracks, outbound timing trimmed from the inbound leg, NAV re-engaged on exit.
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
@@ -88,6 +88,7 @@
       this.s = null; this.geo = null; this.cmdHdg = null;
       this.navApproach = false; this.warn = ''; this.route = null;
       this.maxKt = null; this.minAltFt = null; this.minAltLabel = ''; this.legNM = null; this.speedWarn = ''; this.altWarn = '';
+      this.holdAlt = null; this.altNote = ''; this.altNoteT = -1e9; this.trackedPrev = null; this.trackChangeT = -1e9;
     }
 
     // seconds to the fix at the current ground speed (true airspeed until the ground speed is measured), along the route when it is known
@@ -141,6 +142,7 @@
         this.io.setMode('HDG');
         if (this.io.ap().mode !== 'HDG') { this.reset(); return { ok: false, err: 'Could not switch autopilot to HDG' }; }
         if (!ppos) this.warn = 'Autopilot was not on NAV: flying direct to the fix';
+        this.lockAlt(s);
       }
       this.outTime = this.legTime(s.altFt);
       this.baseLeg = this.outTime;
@@ -272,6 +274,26 @@
       return rem;
     }
 
+    // Altitude lock. GeoFS copies each waypoint's altitude into the autopilot as it moves on to it, and the waypoint after the
+    // hold fix is often 0 (the airport), which sends the aircraft into the ground. Remember the altitude when the hold takes
+    // over and put it back whenever GeoFS changes it; a change the pilot makes by hand becomes the new hold altitude.
+    lockAlt(s) {
+      if (!this.io.apAlt || !this.io.setAlt) return;
+      const a = this.io.apAlt();
+      if (a > 0) this.holdAlt = a;
+      else { this.holdAlt = Math.max(0, Math.round(s.altFt / 100) * 100); if (this.holdAlt > 0) this.io.setAlt(this.holdAlt); }
+    }
+
+    keepAlt(t) {
+      if (!this.holdAlt || !this.io.apAlt) return;
+      const cur = this.io.apAlt();
+      if (!(Math.abs(cur - this.holdAlt) >= 1)) return;
+      if (!(cur > 0) || t - this.trackChangeT < 4) {   // GeoFS moved on to the next waypoint (or sent it to 0): put it back
+        this.io.setAlt(this.holdAlt);
+        this.altNote = 'GeoFS changed the altitude: kept ' + this.holdAlt + ' ft'; this.altNoteT = t;
+      } else this.holdAlt = cur;   // the pilot changed it
+    }
+
     manageSpeed(s, t) {
       if (t - this.lastSpeedT < 2) return;
       this.lastSpeedT = t;
@@ -305,7 +327,9 @@
         this.speedNote = 'max ' + m.label;
         this.speedWarn = m.kt != null && ap.speedMode !== 'knots' ? 'Autopilot speed is not in knots: set it to ' + m.kt + ' kt or less by hand' : '';
       }
-      this.altWarn = this.minAltFt && s.altFt < this.minAltFt - 150 ? 'Below the minimum holding altitude, ' + this.minAltLabel : '';
+      if (this.io.tracked) { const tr = this.io.tracked(); if (tr !== this.trackedPrev) { this.trackedPrev = tr; this.trackChangeT = t; } }
+      this.keepAlt(t);
+      this.altWarn = this.minAltFt && s.altFt < this.minAltFt - 150 ? 'Below the minimum holding altitude, ' + this.minAltLabel : (t - this.altNoteT < 12 ? this.altNote : '');
       if (this.phase !== this.leadPhase) { this.leadPhase = this.phase; this.lead = clamp(0.7 * Math.atan(Math.min(3, 1091 * Math.tan(25 * D2R) / this.tas) * this.tas / 1091) * R2D, 3, Number.isFinite(s.bank) ? 8 : 35); this.phaseT = t; }   // every turn starts from a moderate lead
       // watchdog: no phase except the approach may drag on for more than 15 minutes
       if (this.phase !== 'APPROACH' && t - this.phaseT > 900) return this.abort('Hold stalled in ' + this.phase + ', autopilot left on HDG');
@@ -330,6 +354,7 @@
             this.io.setMode('HDG');
             if (this.io.ap().mode !== 'HDG') return this.abort('Could not switch autopilot to HDG, hold cancelled');
             this.navApproach = false;
+            this.lockAlt(s);
           }
           if (g.d > 0.5) this.approachTrack = g.b;
           const trk = this.approachTrack != null ? this.approachTrack : g.b;
@@ -506,6 +531,8 @@
       setCourse: d => geofs.autopilot.setCourse(d),
       setMode: m => geofs.autopilot.setMode(m),
       setSpeed: kt => geofs.autopilot.setSpeed(kt),
+      apAlt: () => geofs.autopilot.values.altitude,
+      setAlt: ft => geofs.autopilot.setAltitude(ft, true),
       hasNext: i => i + 1 < geofs.flightPlan.waypointArray.length,
       // the waypoint GeoFS's NAV is flying to now, and the distance at which it moves on to the next one (same formula as flightPlan.update)
       tracked: () => { const w = geofs.flightPlan.trackedWaypoint; return w && Number.isFinite(w.id) ? w.id : -1; },
