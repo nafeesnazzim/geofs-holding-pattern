@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.5.1
+- Fixed: the aircraft could dive into the ground when the hold fix was followed by a waypoint with altitude 0 (the airport). GeoFS copies each waypoint's altitude into the autopilot as it moves on. The hold now remembers the autopilot altitude when it takes over and puts it back whenever GeoFS changes it, with an amber note. An altitude you set by hand during the hold becomes the new hold altitude.
+
 ## 1.5.0
 - The approach now follows GeoFS's own waypoint rule. NAV moves on to the next waypoint once it is closer than DMEMargin x altitude (about 6 NM at FL350), so the hold takes over just outside that distance, before NAV turns away from the fix.
 - The distance and ETA to the fix are measured along the route, not in a straight line. A route that doubles back no longer hands over early.
