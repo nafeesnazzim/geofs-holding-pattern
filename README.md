@@ -16,7 +16,10 @@
 
 ## Features
 
-- **Any FMC waypoint** as the hold fix, chosen from a dropdown.
+- **Any FMC waypoint** as the hold fix, chosen from a dropdown. It defaults to the next waypoint ahead and stays on your pick if you edit the plan.
+- **Chart courses as printed:** the inbound course is magnetic. A built-in World Magnetic Model (WMM2025) converts it to the true headings GeoFS flies, and shows the true value beside it.
+- **Auto inbound course:** filled in from the route's track into the fix (marked RTE). Type over it whenever ATC gives you something else.
+- **Presets:** STD (ICAO timing, right turns), 2' and 5NM in one tap.
 - **All three entries:** direct, teardrop and parallel, picked automatically from your arrival track. Left- and right-hand holds.
 - **Standard-rate turns** (3°/s, or 25° bank if that is lower) by steering the heading bug.
 - **Follows your route:** with the autopilot on NAV it keeps flying the flight plan and takes over on HDG just before GeoFS would move NAV on to the next waypoint (inside about 30 s or 1.5 NM at low level, about 7 NM at FL350). Waypoints on the way are not skipped, and the distance and ETA are measured along the route.
@@ -25,10 +28,15 @@
 - **EFC time (UTC HHMM):** optional expect-further-clearance clock.
 - **ICAO maximum holding speed** shown, and applied about 3 minutes before the fix (230 kt up to 14 000 ft, 240 kt to 20 000 ft, 265 kt to 34 000 ft, M0.83 above). Your old speed is restored on exit. Under **More options** you can enter the chart's own **MAX SPD** (it can only lower the ICAO limit) and a **MIN ALT** (FL90 or 9000) that warns you if you are below it.
 - **Hold here:** pick **Present position** in the fix list to hold right where you are. The course defaults to your heading.
-- **Remembers each fix:** course, turns, leg, speed and altitude are refilled when you pick the fix again.
+- **Remembers each fix:** course, turns, leg, speed and altitude are refilled when you pick the fix again (marked MEM).
+- **Live AP ALT and AP SPEED** while holding, with − / + steppers. Click a number to type it (9000 or FL90, 220 or M.78).
+- **Lap counter and time in the hold**, and the **hold drawn on the GeoFS map**.
+- **EFC warning:** amber 5 minutes before, red at EFC.
+- **GeoFS-proof altitude and speed:** GeoFS copies a waypoint's altitude and speed into the autopilot whenever NAV moves on, a waypoint is clicked or one is deleted. The hold puts them back at once. When you leave, a next waypoint at 0 ft (usually the airport) does not send you into the ground: your altitude is kept and you are told to set the descent.
 - **Amber warnings** for a fix behind you, an autopilot speed that is not in knots (your speed mode is never changed), and flying below the minimum altitude.
-- **Clean exit:** crosses the fix inbound, then re-engages NAV to the next waypoint with no speed dip.
-- **Sleek avionics-style panel** with a live racetrack diagram that tracks your aircraft. Press **Shift+H** to cycle full panel, slim pill and hidden (the hold keeps running), and drag it anywhere. Silent (no sounds). Units: kt, ft, NM.
+- **Clean exit:** crosses the fix inbound, then re-engages NAV to the next waypoint with no speed dip. Pressed EXIT by mistake? Press it again to cancel. **LEAVE NOW** leaves straight away, direct to the next waypoint.
+- **Sleek avionics-style panel** with a live racetrack diagram that tracks your aircraft. Three sizes (S, M, L) and soft chimes with a mute button. Drag it anywhere. Units: kt, ft, NM.
+- **Keys:** **Shift+J** enters the hold, arms the exit or cancels it. **Shift+H** cycles full panel, slim pill and hidden (the hold keeps running). GeoFS never sees these keys, so they do not trigger its own H and J.
 
 ## Install
 
@@ -42,12 +50,12 @@ Updates arrive automatically through Tampermonkey.
 
 1. Load a flight plan in the GeoFS FMC and turn the autopilot on.
 2. In the HOLD panel, choose the **FIX** (a waypoint from your plan).
-3. Enter the **INBOUND CRS** (the course you fly *to* the fix, in degrees).
-4. Choose **RIGHT** or **LEFT** turns.
-5. Leave **LEG** empty for AUTO, or type minutes (0.5-5) or a distance such as `5NM`.
+3. Check the **INBOUND °M** course (the course you fly *to* the fix, magnetic, as on the chart). It is pre-filled from your route; type over it if ATC or the chart says otherwise.
+4. Choose **R** or **L** turns.
+5. Tap a preset, or leave **LEG** empty for AUTO, or type minutes (0.5-5) or a distance such as `5NM`.
 6. Optionally enter the **EFC** as UTC HHMM.
-7. Press **ENTER HOLD**. Keep the autopilot on NAV: the panel shows "Armed, following route" and an ETA until the fix, then flies the hold. The panel shows status, timer, wind correction, speed and EFC.
-8. Press **EXIT HOLD** (the same button) when you are cleared. You leave the hold at the fix and NAV resumes towards the next waypoint.
+7. Press **ENTER HOLD** (or Shift+J). Keep the autopilot on NAV: the panel shows "Armed, following route" and an ETA until the fix, then flies the hold. The panel shows status, timer, wind correction, speed and EFC.
+8. Press **EXIT HOLD** (the same button, or Shift+J) when you are cleared. You leave the hold at the fix and NAV resumes towards the next waypoint. **LEAVE NOW** goes straight to the next waypoint instead.
 
 Turning the autopilot off cancels the hold.
 
@@ -75,7 +83,12 @@ Flown live in GeoFS and simulated (thousands of randomised runs plus edge cases)
 
 Max bank stayed at or under about 24° in all flights.
 
+Version 1.6.0 was also flown in real GeoFS (its own physics and autopilot, driven headless) through a NAV approach, a 0 ft / 160 kt airport waypoint, a waypoint deleted mid-hold, LEAVE NOW, a reset mid-hold, simulation speed x2 and a magnetic present-position hold.
+
 ## Known limits
+
+- Courses are magnetic (chart) courses. The GeoFS flight plan list shows true tracks: if you copy a number from there, it will be off by the local variation (about 2° around Sri Lanka, 1° around London, up to 15° or more elsewhere).
+- The magnetic model (WMM2025) is valid until 2030.
 
 - Tested with winds up to about 40 kt, the most the GeoFS slider allows.
 - Sluggish heavy aircraft (such as the A380) take about 30 s to roll into the turn. This is deliberate, to keep bank safe.
